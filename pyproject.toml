@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "hkweather"
+version = "0.1.0"
+description = "Code for project analysing weather and remote sensing data for Hindu Kush"
+authors = ["bamacgabhann <breandan.macgabhann@ul.ie>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pandas = "^2.2.3"
+geopandas = "^1.0.1"
+numpy = "^2.2.3"
+matplotlib = "^3.10.0"
+seaborn = "^0.13.2"
+statsmodels = "^0.14.4"
+rasterio = "^1.4.3"
+
+
+[tool.poetry.group.dev.dependencies]
+ipywidgets = "^8.1.5"
+black = "^25.1.0"
+flake8 = "^7.1.2"
+ipykernel = "^6.29.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
