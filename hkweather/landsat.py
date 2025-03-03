@@ -11,7 +11,42 @@ import os
 import re
 
 from rasterio.enums import Resampling
-from collections import namedtuple
+from rasterio.windows import Window
+
+
+class SceneCollection:
+    def __init__(self, data_folder=None):
+        """
+        Class to handle Landsat scenes
+        """
+
+        self._data_folder = data_folder
+        self._scenes = {}
+
+    @property
+    def data_folder(self):
+        return self._data_folder
+
+    @property
+    def scenes(self):
+        return self._scenes
+
+    @scenes.setter
+    def scenes(self, value: tuple):
+        key, val = value
+        self._scenes[key] = val
+
+    def get_scenes(self):
+        for scene in os.listdir(self.data_folder):
+            if os.path.isdir(os.path.join(self.data_folder, scene)):
+                self.scenes = (
+                    scene,
+                    Scene(scene, os.path.join(self.data_folder, scene)),
+                )
+
+    def process_scenes(self):
+        for scene in self.scenes.values():
+            scene.process()
 
 
 class Scene:
@@ -20,7 +55,31 @@ class Scene:
         Class to handle Landsat scenes
         """
 
-        f_r = re.compile("LE07_L1TP_149035_\d{8}_20200917_02_T1")
+        # Regular expression to validate the scene reference
+        f_r = re.compile(
+            r"^L"  # First character is 'L'
+            r"[COTEM]"  # Second character is either 'C', 'O', 'T', 'E', or 'M'
+            r"(07|08)"  # Third and fourth characters are either '07' or '08'
+            r"_"  # Fifth character is '_'
+            r"L1"  # Sixth and seventh characters are 'L1'
+            r"(TP|GT|GS)"  # Eighth and ninth characters are either 'TP', 'GT', or 'GS'
+            r"_"  # Tenth character is '_'
+            r"\d{3}"  # Characters eleven to thirteen are a group of 3 digits
+            r"\d{3}"  # Characters fourteen to sixteen are a group of 3 digits
+            r"_"  # Seventeenth character is '_'
+            r"\d{4}"  # Characters eighteen to twenty-one are a group of four digits representing a valid year
+            r"(0[1-9]|1[0-2])"  # Characters twenty-two and twenty-three are a group of two digits representing a zero-padded month
+            r"(0[1-9]|[12]\d|3[01])"  # Characters twenty-four and twenty-five are a group of two digits representing a zero-padded day
+            r"_"  # The twenty-fifth character is '_'
+            r"\d{4}"  # Characters twenty-six to twenty-nine are a group of four digits representing a valid year
+            r"(0[1-9]|1[0-2])"  # Characters thirty and thirty-one are a group of two digits representing a zero-padded month
+            r"(0[1-9]|[12]\d|3[01])"  # Characters thirty-two and thirty-three are a group of two digits representing a zero-padded day
+            r"_"  # The thirty-fourth character is '_'
+            r"\d{2}"  # Characters thirty-five and thirty-six are a group of two digits
+            r"_"  # The thirty-seventh character is '_'
+            r"(RT|T1|T2)$"  # Characters thirty-eight and thirty-nine are either 'RT', 'T1', or 'T2'
+        )
+
         if f_r.match(scene) is not None:
             try:
                 dt.datetime.strptime(scene.split("_")[3].strip(), "%Y%m%d").date()
@@ -49,6 +108,9 @@ class Scene:
             self._spacecraft_id = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
                 "SPACECRAFT_ID"
             ]
+            match self._spacecraft_id:
+                case "LANDSAT_7":
+                    self._lambda_thermal = 0.0001145
             self._sensor_id = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
                 "SENSOR_ID"
             ]
@@ -61,15 +123,15 @@ class Scene:
             self._scene_center_datetime = dt.datetime.combine(
                 self._date_acquired, self._scene_center_time
             )
-            self._sun_azimuth = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
-                "SUN_AZIMUTH"
-            ]
-            self._sun_elevation = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
-                "SUN_ELEVATION"
-            ]
-            self._earth_sun_distance = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
-                "EARTH_SUN_DISTANCE"
-            ]
+            self._sun_azimuth = float(
+                mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"]["SUN_AZIMUTH"]
+            )
+            self._sun_elevation = float(
+                mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"]["SUN_ELEVATION"]
+            )
+            self._earth_sun_distance = float(
+                mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"]["EARTH_SUN_DISTANCE"]
+            )
 
             self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
             self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
@@ -85,10 +147,12 @@ class Scene:
             self.B6_VCID_2: ThermalBand = ThermalBand(
                 *self.get_thermal_band_info(mtl, "6_VCID_2")
             )
+
             if vcid == 1:
                 self.B6 = self.B6_VCID_1
             elif vcid == 2:
                 self.B6 = self.B6_VCID_2
+        self.processed_bands = {}
 
         self.ndvi_min = 0.2
         self.ndvi_max = 0.5
@@ -100,6 +164,42 @@ class Scene:
     @property
     def folder(self):
         return self._folder
+
+    @property
+    def spacecraft_id(self):
+        return self._spacecraft_id
+
+    @property
+    def sensor_id(self):
+        return self._sensor_id
+
+    @property
+    def date_acquired(self):
+        return self._date_acquired
+
+    @property
+    def scene_center_time(self):
+        return self._scene_center_time
+
+    @property
+    def scene_center_datetime(self):
+        return self._scene_center_datetime
+
+    @property
+    def sun_azimuth(self):
+        return self._sun_azimuth
+
+    @property
+    def sun_elevation(self):
+        return self._sun_elevation
+
+    @property
+    def earth_sun_distance(self):
+        return self._earth_sun_distance
+
+    @property
+    def lambda_thermal(self):
+        return self._lambda_thermal
 
     def get_shared_band_info(self, mtl, band):
         filename = mtl["LANDSAT_METADATA_FILE"]["PRODUCT_CONTENTS"][
@@ -139,6 +239,7 @@ class Scene:
                 f"RADIANCE_ADD_BAND_{band}"
             ]
         )
+
         return (
             filename,
             path,
@@ -195,7 +296,17 @@ class Scene:
         ) = self.get_reflectance_info(mtl, bandkey)
         return (
             bandkey,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
             filename,
+            self.folder,
             path,
             dtype,
             maxradiance,
@@ -238,7 +349,17 @@ class Scene:
         k1, k2 = self.get_thermal_info(mtl, bandkey)
         return (
             bandkey,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
             filename,
+            self.folder,
             path,
             dtype,
             maxradiance,
@@ -249,74 +370,375 @@ class Scene:
             offset_rad,
             k1,
             k2,
+            self.lambda_thermal,
         )
 
-    def calculate_ndvi(self, save: bool = True):
-        b4 = self.B4.read
-        b3 = self.B3.read
-        b3_float = self.B3.to_float(b3)
-        b4_float = self.B4.to_float(b4)
+    def create_processed_band(self, name: str, meta: dict, info: str):
+        self.processed_bands[name] = ProcessedBand(
+            name,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
+            f"{name}.TIF",
+            self.folder,
+            os.path.join(self.folder, f"{name}.TIF"),
+            meta["dtype"],
+            meta,
+            info,
+        )
+
+    def save(self, name: str, out_meta: dict, data: Any) -> None:
+        file_path = os.path.join(self.folder, f"{name}.TIF")
+        with rasterio.open(file_path, "w", **out_meta) as dst:
+            dst.write(data, 1)
+
+    def calculate_ndvi(self, save: bool = True, ret: bool = False):
+        b3_float = self.B3.to_float()
+        b4_float = self.B4.to_float()
         ndvi = (b4_float - b3_float) / (b4_float + b3_float)
         ndvi_meta = self.B3.meta.copy()
         ndvi_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
-            self.B3.save("NDVI", ndvi_meta, ndvi)
-            self.B3.toa = "NDVI"
-        return ndvi
+            self.save(f"{self.scene}_NDVI", ndvi_meta, ndvi)
+            self.create_processed_band("NDVI", ndvi_meta, info="NDVI")
+        if ret:
+            return ndvi, ndvi_meta
 
-    def calculate_pv(self, ndvi=None, ndvi_min=None, ndvi_max=None):
+    def calculate_pv(
+        self,
+        ndvi=None,
+        ndvi_min=None,
+        ndvi_max=None,
+        save: bool = True,
+        ret: bool = False,
+    ):
         if ndvi is None:
-            ndvi = self.calculate_ndvi()
+            ndvi, pv_meta = self.calculate_ndvi(ret=True)
         if ndvi_min is None:
             ndvi_min = self.ndvi_min
         if ndvi_max is None:
             ndvi_max = self.ndvi_max
         ndvi_clip = np.clip(ndvi, ndvi_min, ndvi_max)
         pv = (ndvi_clip - ndvi_min) / (ndvi_max - ndvi_min)
-        return np.clip(pv, 0, 1)
+        pv_clip = np.clip(pv, 0, 1)
+        if save:
+            self.save(f"{self.scene}_PV", pv_meta, pv_clip)
+            self.create_processed_band("PV", pv_meta, info="PV")
+        if ret:
+            return pv_clip, pv_meta
 
-    def calculate_lse(self, pv):
-        emissivity = 0.004 * pv + 0.986
-        return np.clip(emissivity, 0.98, 1.0)
+    def calculate_lse(self, pv=None, save: bool = True, ret: bool = False):
+        if pv is None:
+            pv, lse_meta = self.calculate_pv(ret=True)
+        lse = 0.004 * pv + 0.986
+        lse_clip = np.clip(lse, 0.98, 1.0)
+        if save:
+            self.save(f"{self.scene}_LSE", lse_meta, lse_clip)
+            self.create_processed_band("LSE", lse_meta, info="LSE")
+        if ret:
+            return lse_clip, lse_meta
 
-    def calculate_lst(self, bt, emissivity, lambda_thermal, c2=1.438):
-        lambda_bt_ratio = (lambda_thermal * bt) / c2
-        log_emissivity = np.log(emissivity)
-        log_emissivity = np.clip(log_emissivity, -20, 20)
-        return bt / (1 + lambda_bt_ratio * log_emissivity)
+    def calculate_lst(
+        self, bt=None, lse=None, c2=1.438, save: bool = True, ret: bool = False
+    ):
+        if bt is None:
+            bt, bt_meta = self.B6.calculate_bt(ret=True)
+        if lse is None:
+            lse, lse_meta = self.calculate_lse(ret=True)
+        lambda_bt_ratio = (self.lambda_thermal * bt) / c2
+        log_lse = np.log(lse)
+        log_lse = np.clip(log_lse, -20, 20)
+        lst_kelvin = bt / (1 + lambda_bt_ratio * log_lse)
+        lst = lst_kelvin - 273.15
+        if save:
+            self.save(f"{self.scene}_LST", lse_meta, lst)
+            self.create_processed_band("LST", lse_meta, info="LST")
+        if ret:
+            return lst, lse_meta
 
-    def calculate_ndsi(self, save: bool = True):
-        b2 = self.B2.read
-        b5 = self.B5.read
-        b2_float = self.B2.to_float(b2)
-        b5_float = self.B5.to_float(b5)
+    def calculate_ndsi(self, save: bool = True, ret: bool = False):
+        b2_float = self.B2.to_float()
+        b5_float = self.B5.to_float()
         ndsi = (b2_float - b5_float) / (b2_float + b5_float)
         ndsi_meta = self.B2.meta.copy()
         ndsi_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
-            self.B2.save("NDSI", ndsi_meta, ndsi)
-            self.B2.toa = "NDSI"
-        return ndsi
+            self.save(f"{self.scene}_NDSI", ndsi_meta, ndsi)
+            self.create_processed_band("NDSI", ndsi_meta, info="NDSI")
+        if ret:
+            return ndsi, ndsi_meta
 
-    def get_points(self, shapefile: str):
-        return gpd.read_file(shapefile)
+    def get_points(self, shapefile: str = None):
+        if shapefile is None:
+            shapefile = os.path.join("data", "locations.feather")
+        match shapefile.split(".")[1].strip():
+            case "feather":
+                gdf = gpd.read_feather(shapefile)
+            case "parquet":
+                gdf = gpd.read_parquet(shapefile)
+            case _:
+                gdf = gpd.read_file(shapefile)
+        return gdf
 
-    def get_average_around_points(self, gdf, band, cells):
-        band_data = band.read
-        band_data_float = band.to_float(band_data)
-        points = []
-        for index, row in gdf.iterrows():
-            point = row.geometry
-            row_data = band_data_float[point.y, point.x]
-            points.append(row_data)
-        return points
+    def get_average_around_points(
+        self,
+        band,
+        cells: int,
+        gdf: gpd.GeoDataFrame = None,
+        save: bool = True,
+        fmt: str = "feather",
+        ret: bool = False,
+    ):
+        if gdf is None:
+            gdf = self.get_points()
+
+        if gdf.crs != band.meta["crs"]:
+            gdf = gdf.to_crs(band.meta["crs"])
+        with rasterio.open(band.path) as src:
+            for index, row in gdf.iterrows():
+                # Get the point coordinates
+                point = row.geometry
+                # Convert point coordinates to raster space
+                src_row, src_col = src.index(point.x, point.y)
+                # Calculate the half window size
+                half_window = cells // 2
+                # define the window
+                window = Window(
+                    src_col - half_window, src_row - half_window, cells, cells
+                )
+                # read the data from the window
+                data = src.read(1, window=window)
+
+                # Calculate the average value, ignoring nodata values
+                average_value = np.nanmean(data)
+
+                # Add the average value to the geodataframe
+                gdf.loc[index, f"{band.band}_{cells}px"] = average_value
+
+                # add the date and time to the geodataframe
+                gdf.loc[index, "date"] = band.scene_center_datetime
+
+        # re-index the geodataframe by the date
+        gdf = gdf.set_index("date")
+
+        if save:
+            match fmt:
+                case "feather":
+                    gdf.to_feather(
+                        os.path.join(
+                            self.folder, f"{self.scene}_{band.band}_{cells}px.feather"
+                        )
+                    )
+                case "parquet":
+                    gdf.to_parquet(
+                        os.path.join(
+                            self.folder, f"{self.scene}_{band.band}_{cells}px.parquet"
+                        )
+                    )
+                case "_":
+                    try:
+                        gdf.to_file(
+                            os.path.join(
+                                self.folder, f"{self.scene}_{band.band}_{cells}px.{fmt}"
+                            ),
+                            driver=fmt,
+                        )
+                    except Exception:
+                        gdf.to_file(
+                            os.path.join(
+                                self.folder, f"{self.scene}_{band.band}_{cells}px.gpkg"
+                            ),
+                            driver="GPKG",
+                        )
+            gdf.to_csv(
+                os.path.join(self.folder, f"{self.scene}_{band.band}_{cells}px.csv")
+            )
+
+        if ret:
+            return gdf
+
+    def process(self):
+        self.calculate_lst()
+        self.calculate_ndsi()
+        for band in self.processed_bands.values():
+            self.get_average_around_points(band, 3)
 
 
-class ReflectanceBand:
+class Band:
     def __init__(
         self,
         band: str,
+        scene: str,
+        spacecraft_id: str,
+        sensor_id: str,
+        date_acquired: dt.date,
+        scene_center_time: dt.time,
+        scene_center_datetime: dt.datetime,
+        sun_azimuth: float,
+        sun_elevation: float,
+        earth_sun_distance: float,
         filename: str,
+        folder: str,
+        path: object,
+        dtype: object,
+        meta: dict = None,
+        crs: object = None,
+    ) -> None:
+        """
+        Class to handle Landsat bands, with child classes for reflected, thermal, and processed bands
+        """
+        self._band = band
+        self._scene = scene
+        self._spacecraft_id = spacecraft_id
+        self._sensor_id = sensor_id
+        self._date_acquired = date_acquired
+        self._scene_center_time = scene_center_time
+        self._scene_center_datetime = scene_center_datetime
+        self._sun_azimuth = sun_azimuth
+        self._sun_elevation = sun_elevation
+        self._earth_sun_distance = earth_sun_distance
+        self._filename = filename
+        self._folder = folder
+        self._path = path
+        self._dtype = dtype
+        if meta is not None:
+            self._meta = meta
+        else:
+            with rasterio.open(self.path) as src:
+                self._meta = src.meta
+        self._crs = crs if crs is not None else self._meta["crs"]
+        self._versions = {self._band: "original"}
+
+    @property
+    def band(self):
+        return self._band
+
+    @property
+    def scene(self):
+        return self._scene
+
+    @property
+    def spacecraft_id(self):
+        return self._spacecraft_id
+
+    @property
+    def sensor_id(self):
+        return self._sensor_id
+
+    @property
+    def date_acquired(self):
+        return self._date_acquired
+
+    @property
+    def scene_center_time(self):
+        return self._scene_center_time
+
+    @property
+    def scene_center_datetime(self):
+        return self._scene_center_datetime
+
+    @property
+    def sun_azimuth(self):
+        return self._sun_azimuth
+
+    @property
+    def sun_elevation(self):
+        return self._sun_elevation
+
+    @property
+    def earth_sun_distance(self):
+        return self._earth_sun_distance
+
+    @property
+    def folder(self):
+        return self._folder
+
+    @property
+    def filename(self):
+        return self._filename
+
+    @property
+    def path(self):
+        return self._path
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @property
+    def read(self):
+        with rasterio.open(self.path) as src:
+            band_data = src.read(1)
+        return band_data
+
+    @property
+    def meta(self):
+        return self._meta
+
+    @property
+    def versions(self):
+        return self._versions
+
+    @versions.setter
+    def versions(self, value: tuple):
+        key, val = value
+        self._versions[key] = val
+
+    def return_resampled(
+        self,
+        height: int,
+        width: int,
+        mode=Resampling.nearest,
+    ):
+        with rasterio.open(self.path) as src:
+            scale_h = src.height / height
+            scale_w = src.width / width
+            out_meta = src.meta.copy()
+            out_meta.update(
+                {
+                    "transform": src.transform * src.transform.scale(scale_w, scale_h),
+                    "height": height,
+                    "width": width,
+                }
+            )
+            out_data = src.read(
+                out_shape=(src.count, height, width),
+                resampling=mode,
+            )
+            return out_data, out_meta
+
+    def to_float(self) -> Any:
+        band64 = self.read.astype(np.float64)
+        band64[band64 == 0] = np.nan
+        return band64
+
+    def save(self, name: str, out_meta: dict, data: Any) -> None:
+        file_path = os.path.join(self.folder, f"{name}.TIF")
+        with rasterio.open(file_path, "w", **out_meta) as dst:
+            dst.write(data, 1)
+
+
+class ReflectanceBand(Band):
+    def __init__(
+        self,
+        band: str,
+        scene: str,
+        spacecraft_id: str,
+        sensor_id: str,
+        date_acquired: dt.date,
+        scene_center_time: dt.time,
+        scene_center_datetime: dt.datetime,
+        sun_azimuth: float,
+        sun_elevation: float,
+        earth_sun_distance: float,
+        filename: str,
+        folder: str,
         path: object,
         dtype: object,
         maxradiance: float,
@@ -330,15 +752,28 @@ class ReflectanceBand:
         gain_ref: float,
         offset_ref: float,
         meta: dict = None,
+        reflectance: bool = False,
     ) -> None:
         """
         Class to handle Landsat reflectance bands
         """
-
-        self._band = band
-        self._filename = filename
-        self._path = path
-        self._dtype = dtype
+        super().__init__(
+            band,
+            scene,
+            spacecraft_id,
+            sensor_id,
+            date_acquired,
+            scene_center_time,
+            scene_center_datetime,
+            sun_azimuth,
+            sun_elevation,
+            earth_sun_distance,
+            filename,
+            folder,
+            path,
+            dtype,
+            meta,
+        )
         self._maxradiance = maxradiance
         self._minradiance = minradiance
         self._maxreflectance = maxreflectance
@@ -349,31 +784,8 @@ class ReflectanceBand:
         self._offset_rad = offset_rad
         self._gain_ref = gain_ref
         self._offset_ref = offset_ref
-        self._resampled = [band]
-        self._resample_index = 0
-        self._toa = None
 
-        if meta is not None:
-            self._meta = meta
-        else:
-            with rasterio.open(self.path) as src:
-                self._meta = src.meta
-
-    @property
-    def band(self):
-        return self._band
-
-    @property
-    def filename(self):
-        return self._filename
-
-    @property
-    def path(self):
-        return self._path
-
-    @property
-    def dtype(self):
-        return self._dtype
+        self._reflectance = reflectance
 
     @property
     def maxradiance(self):
@@ -416,43 +828,41 @@ class ReflectanceBand:
         return self._offset_ref
 
     @property
-    def resampled(self):
-        return self._resampled
+    def reflectance(self):
+        return self._reflectance
 
-    @resampled.setter
-    def resampled(self, value: str):
-        self._resampled.append(value)
+    @reflectance.setter
+    def reflectance(self, value: bool = True):
+        self._reflectance = value
 
-    @property
-    def resample_index(self):
-        return self._resample_index
-
-    @resample_index.setter
-    def resample_index(self, value: bool):
-        if value:
-            self._resample_index += 1
-
-    @property
-    def toa(self):
-        return self._toa
-
-    @toa.setter
-    def toa(self, value: str):
-        self._toa = value
-
-    @property
-    def read(self):
-        with rasterio.open(self.path) as src:
-            band_data = src.read
-        return band_data
-
-    @property
-    def meta(self):
-        return self._meta
-
-    @meta.setter
-    def meta(self, value: dict):
-        self._meta.update(value)
+    def create_reflectance_band(self, name: str, meta: dict):
+        globals()[name] = ReflectanceBand(
+            name,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
+            f"{name}.TIF",
+            self.folder,
+            os.path.join(self.folder, f"{name}.TIF"),
+            self.dtype,
+            self.maxradiance,
+            self.minradiance,
+            self.maxreflectance,
+            self.minreflectance,
+            self.maxqcal,
+            self.minqcal,
+            self.gain_rad,
+            self.offset_rad,
+            self.gain_ref,
+            self.offset_ref,
+            meta,
+        )
 
     def resample(
         self,
@@ -460,97 +870,54 @@ class ReflectanceBand:
         width: int,
         mode=Resampling.nearest,
         name: str = None,
-        save: bool = False,
+        save: bool = True,
+        ret: bool = False,
     ):
-        with rasterio.open(self.path) as src:
-            scale_h = src.height / height
-            scale_w = src.width / width
-            out_meta = src.meta.copy()
-            out_meta.update(
-                {
-                    "transform": src.transform * src.transform.scale(scale_w, scale_h),
-                    "height": height,
-                    "width": width,
-                }
-            )
-            out_data = src.read(
-                out_shape=(src.count, height, width),
-                resampling=mode,
-            )
-
-        if not name:
-            name = f"{self.band}_resampled_{self.resample_index}"
+        out_data, out_meta = self.return_resampled(height, width, mode)
 
         if save:
+            if not name:
+                name = f"{self.band}_resampled_{height}x{width}"
             self.save(name, out_meta, out_data)
-            globals()[name] = ReflectanceBand(
-                name,
-                f"{name}.TIF",
-                os.path.join(self.folder, f"{name}.TIF"),
-                self.dtype,
-                self.maxradiance,
-                self.minradiance,
-                self.maxreflectance,
-                self.minreflectance,
-                self.maxqcal,
-                self.minqcal,
-                self.gain_rad,
-                self.offset_rad,
-                self.gain_ref,
-                self.offset_ref,
-                out_meta,
-            )
-            self.resampled = name
-            self.resample_index = True
+            self.create_reflectance_band(name, out_meta)
+            self.versions = (name, "resampled")
 
-    def reflectance_rescale(self, name: str = None, save: bool = False):
-        gain = self.gain_ref
-        offset = self.offset_ref
-        banddata = self.read
-        band_float = self.to_float(banddata)
-        band_rescaled = (band_float * gain) + offset
-        rescaled_meta = self.meta.copy()
-        rescaled_meta.update(dtype=np.float64, nodata=np.nan)
+        if ret:
+            return out_data, out_meta
+
+    def to_reflectance(self, name: str = None, save: bool = True, ret: bool = False):
+        band_float = self.to_float()
+        band_reflectance = (band_float * self.gain_ref) + self.offset_ref
+        meta_reflectance = self.meta.copy()
+        meta_reflectance.update(dtype=np.float64, nodata=np.nan)
+
         if save:
             if not name:
                 name = f"{self.band}_TOA"
-            self.save(name, rescaled_meta, band_rescaled)
-            globals()[name] = ReflectanceBand(
-                name,
-                f"{name}.TIF",
-                os.path.join(self.folder, f"{name}.TIF"),
-                self.dtype,
-                self.maxradiance,
-                self.minradiance,
-                self.maxreflectance,
-                self.minreflectance,
-                self.maxqcal,
-                self.minqcal,
-                self.gain_rad,
-                self.offset_rad,
-                self.gain_ref,
-                self.offset_ref,
-                rescaled_meta,
-            )
-            self.toa = name
-        return band_rescaled
+            self.save(name, meta_reflectance, band_reflectance)
+            self.create_reflectance_band(name, meta_reflectance)
+            self.versions = (name, "reflectance")
+            self.reflectance = True
 
-    def to_float(self, raster: np.uint8) -> np.float64:
-        raster64 = raster.astype(np.float64)
-        raster64[raster64 == 0] = np.nan
-        return raster64
-
-    def save(self, name: str, out_meta: dict, data: Any):
-        file_path = os.path.join(self.folder, f"{name}.TIF")
-        with rasterio.open(file_path, "w", **out_meta) as dst:
-            dst.write(data, 1)
+        if ret:
+            return band_reflectance, meta_reflectance
 
 
-class ThermalBand:
+class ThermalBand(Band):
     def __init__(
         self,
         band: str,
+        scene: str,
+        spacecraft_id: str,
+        sensor_id: str,
+        date_acquired: dt.date,
+        scene_center_time: dt.time,
+        scene_center_datetime: dt.datetime,
+        sun_azimuth: float,
+        sun_elevation: float,
+        earth_sun_distance: float,
         filename: str,
+        folder: str,
         path: object,
         dtype: object,
         maxradiance: float,
@@ -561,17 +928,29 @@ class ThermalBand:
         offset_rad: float,
         k1: float,
         k2: float,
+        lambda_thermal: float,
         meta: dict = None,
     ):
         """
         Class to handle Landsat bands
         """
-
-        self._path = path
-        self._band = band
-        self._filename = filename
-        self._path = path
-        self._dtype = dtype
+        super().__init__(
+            band,
+            scene,
+            spacecraft_id,
+            sensor_id,
+            date_acquired,
+            scene_center_time,
+            scene_center_datetime,
+            sun_azimuth,
+            sun_elevation,
+            earth_sun_distance,
+            filename,
+            folder,
+            path,
+            dtype,
+            meta,
+        )
         self._maxradiance = maxradiance
         self._minradiance = minradiance
         self._maxqcal = maxqcal
@@ -580,6 +959,7 @@ class ThermalBand:
         self._offset_rad = offset_rad
         self._k1 = k1
         self._k2 = k2
+        self._lambda_thermal = lambda_thermal
         self._resampled = [band]
         self._resample_index = 0
         self._toa = None
@@ -589,22 +969,6 @@ class ThermalBand:
         else:
             with rasterio.open(self.path) as src:
                 self._meta = src.meta
-
-    @property
-    def band(self):
-        return self._band
-
-    @property
-    def filename(self):
-        return self._filename
-
-    @property
-    def path(self):
-        return self._path
-
-    @property
-    def dtype(self):
-        return self._dtype
 
     @property
     def maxradiance(self):
@@ -639,6 +1003,10 @@ class ThermalBand:
         return self._k2
 
     @property
+    def lambda_thermal(self):
+        return self._lambda_thermal
+
+    @property
     def resampled(self):
         return self._resampled
 
@@ -663,19 +1031,33 @@ class ThermalBand:
     def toa(self, value: str):
         self._toa = value
 
-    @property
-    def read(self):
-        with rasterio.open(self.path) as src:
-            band_data = src.read
-        return band_data
-
-    @property
-    def meta(self):
-        return self._meta
-
-    @meta.setter
-    def meta(self, value: dict):
-        self._meta.update(value)
+    def create_thermal_band(self, name: str, meta: dict):
+        globals()[name] = ThermalBand(
+            name,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
+            f"{name}.TIF",
+            self.folder,
+            os.path.join(self.folder, f"{name}.TIF"),
+            self.dtype,
+            self.maxradiance,
+            self.minradiance,
+            self.maxqcal,
+            self.minqcal,
+            self.gain_rad,
+            self.offset_rad,
+            self.k1,
+            self.k2,
+            self.lambda_thermal,
+            meta,
+        )
 
     def resample(
         self,
@@ -683,454 +1065,139 @@ class ThermalBand:
         width: int,
         mode=Resampling.nearest,
         name: str = None,
-        save: bool = False,
+        save: bool = True,
+        ret: bool = False,
     ):
-        with rasterio.open(self.path) as src:
-            scale_h = src.height / height
-            scale_w = src.width / width
-            out_meta = src.meta.copy()
-            out_meta.update(
-                {
-                    "transform": src.transform * src.transform.scale(scale_w, scale_h),
-                    "height": height,
-                    "width": width,
-                }
-            )
-            out_data = src.read(
-                out_shape=(src.count, height, width),
-                resampling=mode,
-            )
-
-        if not name:
-            name = f"{self.band}_resampled_{self.resample_index}"
+        out_data, out_meta = self.return_resampled(height, width, mode)
 
         if save:
+            if not name:
+                name = f"{self.band}_resampled_{self.resample_index}"
             self.save(name, out_meta, out_data)
-            globals()[name] = ThermalBand(
-                name,
-                f"{name}.TIF",
-                os.path.join(self.folder, f"{name}.TIF"),
-                self.dtype,
-                self.maxradiance,
-                self.minradiance,
-                self.maxqcal,
-                self.minqcal,
-                self.gain_rad,
-                self.offset_rad,
-                self.k1,
-                self.k2,
-                out_meta,
-            )
+            self.create_thermal_band(name, out_meta)
             self.resampled = name
             self.resample_index = True
 
-    def radiance_rescale(self, name: str = None, save: bool = False):
-        gain = self.gain_rad
-        offset = self.offset_rad
-        banddata = self.read
-        band_float = self.to_float(banddata)
-        band_rescaled = (band_float * gain) + offset
+        if ret:
+            return out_data, out_meta
+
+    def to_radiance(self, name: str = None, save: bool = True, ret: bool = False):
+        band_float = self.to_float()
+        band_rescaled = (band_float * self.gain_rad) + self.offset_rad
         rescaled_meta = self.meta.copy()
         rescaled_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
             if not name:
-                name = f"{self.band}_TOA"
+                name = f"{self.scene}_{self.band}_TOA"
             self.save(name, rescaled_meta, band_rescaled)
-            globals()[name] = ThermalBand(
-                name,
-                f"{name}.TIF",
-                os.path.join(self.folder, f"{name}.TIF"),
-                self.dtype,
-                self.maxradiance,
-                self.minradiance,
-                self.maxqcal,
-                self.minqcal,
-                self.gain_rad,
-                self.offset_rad,
-                self.k1,
-                self.k2,
-                rescaled_meta,
-            )
+            self.create_thermal_band(name, rescaled_meta)
             self.toa = name
-        return band_rescaled
 
-    def to_float(self, raster: np.uint8) -> np.float64:
-        raster64 = raster.astype(np.float64)
-        raster64[raster64 == 0] = np.nan
-        return raster64
+        if ret:
+            return band_rescaled, rescaled_meta
 
-    def save(self, name: str, out_meta: dict, data: Any):
-        file_path = os.path.join(self.folder, f"{name}.TIF")
-        with rasterio.open(file_path, "w", **out_meta) as dst:
-            dst.write(data, 1)
+    def calculate_bt(self, name: str = None, save: bool = True, ret: bool = False):
+        """Converts TOA radiance to brightness temperature using the Planck equation."""
+        # Add a small constant to avoid taking log of zero or negative values
+        radiance, radiance_meta = self.to_radiance(ret=True)
+        radiance_clip = np.clip(radiance, 1e-10, None)
 
-    def radiance_to_bt(self, radiance, k1, k2):
-        return k2 / np.log((k1 / radiance) + 1)
-
-    def calculate_bt(self, name: str = None, save: bool = False):
-        radiance = self.radiance_rescale()
-        bt = self.radiance_to_bt(radiance, self.k1, self.k2)
-        bt_meta = self.meta.copy()
+        bt = self.k2 / np.log((self.k1 / radiance_clip) + 1)
+        bt_meta = radiance_meta.copy()
         bt_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
             if not name:
-                name = f"{self.band}_BT"
+                name = f"{self.scene}_{self.band}_BT"
             self.save(name, bt_meta, bt)
-            globals()[name] = ThermalBand(
-                name,
-                f"{name}.TIF",
-                os.path.join(self.folder, f"{name}.TIF"),
-                self.dtype,
-                self.maxradiance,
-                self.minradiance,
-                self.maxqcal,
-                self.minqcal,
-                self.gain_rad,
-                self.offset_rad,
-                self.k1,
-                self.k2,
-                bt_meta,
-            )
+            self.create_thermal_band(name, bt_meta)
             self.toa = name
-        return bt
+        if ret:
+            return bt, bt_meta
 
 
-BAND = namedtuple(
-    "band",
-    "band filename path dtype maxradiance minradiance maxreflectance minreflectance maxqcal minqcal radiancemult radianceadd reflectancemult reflectanceadd k1 k2",
-    defaults=(
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ),
-)
-
-
-def read_raster(file_path):
-    """Reads a raster file and returns the data of the first band."""
-    with rasterio.open(file_path) as src:
-        band_data = src.read  # Read first band
-    return band_data
-
-
-def read_raster_and_meta(file_path):
-    """Reads a raster file and returns the data of the first band."""
-    with rasterio.open(file_path) as src:
-        band_data = src.read  # Read first band
-        meta = src.meta
-    return band_data, meta
-
-
-class Landsat:
+class ProcessedBand(Band):
     def __init__(
         self,
-        folder=None,
-        B6="B6_VCID_2",
-    ):
-        """
-        docstring to update
-        """
-
-    def read_band(self, band_key: str) -> tuple[np.float64 | float | np.uint8, dict]:
-        """Reads a raster file and returns the data of the first band."""
-        with rasterio.open(self.band[band_key].path) as src:
-            band_data = src.read  # Read first band
-            band_meta: dict = src.meta
-        return band_data, band_meta
-
-    def resample_band(
-        self, band_key: str, height: int, width: int, mode: object = Resampling.nearest
-    ) -> tuple[np.float64 | float | np.uint8, dict]:
-        # sourcery skip: dict-assign-update-to-union
-        """Reads a raster file and resamples with the specified dimensions and mode."""
-        with rasterio.open(self.band[band_key].path) as src:
-            band_meta: dict = src.meta
-            scale_h = height / band_meta["height"]
-            scale_w = width / band_meta["width"]
-            out_meta: dict = src.meta.copy()
-            out_meta.update(
-                {
-                    "transform": src.transform * src.transform.scale(scale_w, scale_h),
-                    "height": height,
-                    "width": width,
-                }
-            )
-            out_data = src.read
-
-        return out_data, out_meta
-
-    def save_raster(
-        self,
-        name: str,
-        meta: dict,
-        band_data: np.float64 | float | np.uint8,
-        add: bool = False,
+        band: str,
+        scene: str,
+        spacecraft_id: str,
+        sensor_id: str,
+        date_acquired: dt.date,
+        scene_center_time: dt.time,
+        scene_center_datetime: dt.datetime,
+        sun_azimuth: float,
+        sun_elevation: float,
+        earth_sun_distance: float,
+        filename: str,
+        folder: str,
+        path: object,
+        dtype: object,
+        meta: dict = None,
+        info: str = None,
     ) -> None:
-        """Reads a raster file and returns the data of the first band."""
-        file_name = f"{self.root}_{name}.TIF"
-        file_path = os.path.join(self.folder, file_name)
-        with rasterio.open(file_path, "w", **meta) as dst:
-            dst.write(band_data, 1)  # Write first band
-        if add:
-            self.band[name] = BAND(
-                name,
-                file_name,
-                file_path,
-                meta["dtype"],
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
+        """
+        Class to handle Landsat reflectance bands
+        """
+        super().__init__(
+            band,
+            scene,
+            spacecraft_id,
+            sensor_id,
+            date_acquired,
+            scene_center_time,
+            scene_center_datetime,
+            sun_azimuth,
+            sun_elevation,
+            earth_sun_distance,
+            filename,
+            folder,
+            path,
+            dtype,
+            meta,
+        )
+        self._info = info
 
-    def save_multiband_raster(self, name, meta, *band_data):
-        """Reads a raster file and returns the data of the first band."""
-        file_path = os.path.join(self.folder, f"{self.root}_{name}.TIF")
-        bands = len(band_data)
-        meta.update(count=bands, dtype=band_data[0].dtype)
-        with rasterio.open(file_path, "w", **meta) as dst:
-            for bandn, band in enumerate(band_data, start=1):
-                dst.write(band, bandn)  # Write band data
+    @property
+    def info(self):
+        return self._info
 
-    # method to radiometrically rescale reflectance band data
-    def reflectance_rescale(self, band_key: str) -> tuple[np.float64, dict]:
-        """Radiometrically rescales reflectance band data using the provided constants."""
-        gain = self.band[band_key].reflectancemult
-        offset = self.band[band_key].reflectanceadd
-        banddata, bandmeta = self.read_band(band_key)
-        band_float = self.raster_to_float(banddata)
-        band_rescaled = (band_float * gain) + offset
-        return band_rescaled, bandmeta
+    def create_processed_band(self, name: str, meta: dict, info: str):
+        globals()[name] = ProcessedBand(
+            name,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
+            f"{name}.TIF",
+            self.folder,
+            os.path.join(self.folder, f"{name}.TIF"),
+            self.dtype,
+            meta,
+            info,
+        )
 
-    # method to radiometrically rescale radiance band data
-    def radiance_rescale(self, band_key: str) -> tuple[np.float64 | float, dict]:
-        """Radiometrically rescales radiance band data using the provided constants."""
-        gain = self.band[band_key].radiancemult
-        offset = self.band[band_key].radianceadd
-        banddata, bandmeta = self.read_band(band_key)
-        band_float = self.raster_to_float(banddata)
-        band_rescaled = (band_float * gain) + offset
-        rescaled_meta: dict[str, Any] = bandmeta.copy()
-        rescaled_meta.update(dtype=np.float64, nodata=np.nan)
-        return band_rescaled, rescaled_meta
-
-    def calculate_bt(self, band_key: str) -> tuple[np.float64, dict]:
-        """Calculates Brightness Temperature (BT) from a thermal band."""
-        # Radiometrically rescale the thermal band data
-        radiance, radiance_meta = self.radiance_rescale(band_key)
-        # Calculate Brightness Temperature (BT) from the radiance values
-        k1 = self.band[band_key].k1
-        k2 = self.band[band_key].k2
-        bt = self.radiance_to_brightness_temp(radiance, k1, k2)
-        return bt, radiance_meta
-
-    # Function to convert DN values to TOA Radiance
-    def dn_to_radiance(self, dn, gain, offset):
-        """Converts the DN values to TOA radiance using the gain and offset."""
-        return (gain * dn) + offset
-
-    # Function to convert TOA Radiance to Brightness Temperature with error handling for low radiance
-    def radiance_to_brightness_temp(self, radiance, K1, K2):
-        """Converts TOA radiance to brightness temperature using the Planck equation."""
-        # Add a small constant to avoid taking log of zero or negative values
-        radiance_clip = np.clip(
-            radiance, 1e-10, None
-        )  # Clip radiance to avoid negative or zero values
-        return K2 / np.log((K1 / radiance_clip) + 1)
-
-    # Function to calculate Proportion of Vegetation (Pv)
-    def calculate_pv(self, ndvi=None, ndvi_min=None, ndvi_max=None):
-        """Calculates the proportion of vegetation (Pv) based on NDVI."""
-        if ndvi is None:
-            try:
-                ndvi_meta: dict
-                ndvi_data, ndvi_meta = self.read_band("NDVI")
-            except ValueError:
-                ndvi_data, ndvi_meta = self.calculate_ndvi()
-        else:
-            ndvi_data, ndvi_meta = self.read_band(ndvi)
-
-        if ndvi_min is None:
-            ndvi_min = self.ndvi_min
-        if ndvi_max is None:
-            ndvi_max = self.ndvi_max
-
-        # Clip the NDVI to the valid range
-        ndvi_clip = np.clip(ndvi, ndvi_min, ndvi_max)
-        # Ensure Pv stays between 0 and 1
-        pv = (ndvi_clip - ndvi_min) / (ndvi_max - ndvi_min)
-        return np.clip(pv, 0, 1), ndvi_meta
-
-    # Function to calculate Land Surface Emissivity (LSE)
-    def calculate_lse(self, pv):
-        """Calculates land surface emissivity (LSE) based on Pv."""
-        # Revisit emissivity formula to ensure proper emissivity behavior
-        emissivity = 0.004 * pv + 0.986
-        return np.clip(
-            emissivity, 0.98, 1.0
-        )  # Limiting emissivity to be between 0.98 and 1.0
-
-    # Function to calculate Land Surface Temperature (LST) with a small radiance adjustment for safety
-    def calculate_lst(self, bt, emissivity, lambda_thermal, c2=1.438):
-        """Calculates Land Surface Temperature using the Single-Channel Algorithm."""
-
-        # Ensure BT values are within expected ranges
-        lambda_bt_ratio = (lambda_thermal * bt) / c2
-        log_emissivity = np.log(emissivity)
-
-        # Preventing logarithmic errors by adding a small value to emissivity if necessary
-        log_emissivity = np.clip(log_emissivity, -20, 20)  # Prevent extreme values
-
-        return bt / (1 + lambda_bt_ratio * log_emissivity)
-
-    # method to convert raster to float
-    def raster_to_float(self, raster: np.uint8) -> np.float64:
-        """Converts a raster to float64 data type."""
-        raster64 = raster.astype(np.float64)  # Convert to float64
-        raster64[raster64 == 0] = np.nan  # Set zero values to NaN
-        return raster64
-
-    # method to calculate NDVI
-    def calculate_ndvi(self, save: bool = True) -> tuple[np.float64 | float, dict]:
-        """Calculates NDVI"""
-
-        b3, b3meta = self.read_band(self.band["B3"])
-        b4, b4meta = self.read_band(self.band["B4"])
-        b3 = self.raster_to_float(b3)
-        b4 = self.raster_to_float(b4)
-        ndvi_meta = b3meta
-        ndvi_meta.update(dtype=np.float64, nodata=np.nan)
-
-        # needs reflectance rescale
-
-        ndvi = (b4 - b3) / (b4 + b3)
+    def resample(
+        self,
+        height: int,
+        width: int,
+        mode=Resampling.nearest,
+        name: str = None,
+        save: bool = True,
+        ret: bool = False,
+    ):
+        out_data, out_meta = self.return_resampled(height, width, mode)
 
         if save:
-            self.save_raster("NDVI", ndvi_meta, ndvi, add=True)
-            self.ndvi_meta = ndvi_meta
+            if not name:
+                name = f"{self.band}_resampled_{height}x{width}"
+            self.save(name, out_meta, out_data)
+            self.create_processed_band(name, out_meta, f"{self.band}_resampled")
+            self.versions = (name, "resampled")
 
-        return ndvi, ndvi_meta
-
-    # Function to resample raster data to match the thermal band dimensions
-    def resample_raster_to_match(
-        self, to_match, to_resample, mode=Resampling.nearest, name=None, save=True
-    ):
-        """Resamples a raster to match a second raster's dimensions."""
-
-        # Read band to be matched
-        to_match_data, to_match_meta = self.read_band(self.band[to_match].path)
-        to_match_width = to_match_meta["width"]
-        to_match_height = to_match_meta["height"]
-
-        # Resample the NDVI raster to match the thermal band's size
-        resampled_data, resampled_meta = self.resample_band(
-            to_resample, to_match_height, to_match_width, mode=mode
-        )
-
-        if save is True:
-            if name is None:
-                name = f"{self.band[to_resample].band}_resampled"
-            self.save_raster(name, resampled_meta, resampled_data, add=True)
-
-        return resampled_data, resampled_meta
-
-    # Main function to process the data and calculate LST
-    def process_landsat_data(self):
-        # check NDVI data exists
-        try:
-            os.path.isfile(self.read_band(self.band["NDVI"].path))
-        except ValueError:
-            self.calculate_ndvi(save=True)
-
-        # Get thermal band data
-        thermal_band, thermal_meta = self.read_band("B6")
-
-        # Inspect thermal band DN values
-        thermal_band_min = np.nanmin(thermal_band)
-        thermal_band_max = np.nanmax(thermal_band)
-        print(
-            f"Thermal Band DN Values: Min = {thermal_band_min}, Max = {thermal_band_max}"
-        )
-
-        # Resample NDVI to match the thermal band's dimensions
-        ndvi_band = self.resample_raster_to_match(
-            "B6", "NDVI", save=True, name="NDVI_resampled"
-        )
-
-        # Step 2: Read constants
-        gain = self.band["B6"].radiancemult
-        offset = self.band["B6"].radianceadd
-        K1 = self.band["B6"].k1
-        K2 = self.band["B6"].k2
-
-        print(f"Constants: Gain={gain}, Offset={offset}, K1={K1}, K2={K2}")
-
-        # Step 3: Convert DN to TOA Radiance
-        radiance, radiance_meta = self.radiance_rescale("B6")
-        print(f"Radiance: Min = {np.nanmin(radiance)}, Max = {np.nanmax(radiance)}")
-
-        # Step 4: Convert TOA Radiance to Brightness Temperature (BT)
-        bt, bt_meta = self.calculate_bt("B6")
-        print(f"Brightness Temperature: Min = {np.nanmin(bt)}, Max = {np.nanmax(bt)}")
-
-        # Step 5: Calculate Proportion of Vegetation (Pv) and LSE using pre-calculated NDVI
-        pv, pv_meta = self.calculate_pv("NDVI_resampled")
-        print(f"Pv Values: Min = {np.nanmin(pv)}, Max = {np.nanmax(pv)}")
-        emissivity = self.calculate_lse(pv)
-        print(
-            f"Emissivity Values: Min = {np.nanmin(emissivity)}, Max = {np.nanmax(emissivity)}"
-        )
-
-        # Step 6: Calculate LST (in Kelvin)
-        lambda_thermal = 0.0001145  # µm for Landsat 7 Band 6
-        lst_kelvin = self.calculate_lst(bt, emissivity, lambda_thermal)
-        print(
-            f"LST (Kelvin): Min = {np.nanmin(lst_kelvin)}, Max = {np.nanmax(lst_kelvin)}"
-        )
-
-        # Step 7: Convert LST from Kelvin to Celsius
-        lst_celsius = lst_kelvin - 273.15
-        print(
-            f"LST (Celsius): Min = {np.nanmin(lst_celsius)}, Max = {np.nanmax(lst_celsius)}"
-        )
-
-        # Save the LST output as a new GeoTIFF file (optional)
-        os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
-        output_file_path = os.path.join(output_dir, "LST_output.tif")
-
-        with rasterio.open(
-            output_file_path,
-            "w",
-            driver="GTiff",
-            count=1,
-            dtype="float32",
-            crs="+proj=latlong",
-            transform=rasterio.open(thermal_band_path).transform,
-            width=lst_celsius.shape[1],
-            height=lst_celsius.shape[0],
-        ) as dst:
-            dst.write(lst_celsius, 1)
-
-        print(f"LST calculation complete and saved as {output_file_path}.")
-        return lst_celsius
+        if ret:
+            return out_data, out_meta
