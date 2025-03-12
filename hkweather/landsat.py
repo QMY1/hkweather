@@ -57,27 +57,27 @@ class Scene:
 
         # Regular expression to validate the scene reference
         f_r = re.compile(
-            r"^L"  # First character is 'L'
-            r"[COTEM]"  # Second character is either 'C', 'O', 'T', 'E', or 'M'
-            r"(07|08)"  # Third and fourth characters are either '07' or '08'
+            r"^L"  # First character is 'L' = Landsat
+            r"[COTEM]"  # Second character is either 'C' [=OLI+TIRS], 'O' [=OLI], 'T' [L05: =TM; L08-09: =TIRS], 'E' [=ETM+], or 'M' [=MSS] (sensor)
+            r"(05|07|08|09)"  # Third and fourth characters are either '05', '07', '08' or '09' = satellite
             r"_"  # Fifth character is '_'
-            r"L1"  # Sixth and seventh characters are 'L1'
-            r"(TP|GT|GS)"  # Eighth and ninth characters are either 'TP', 'GT', or 'GS'
+            r"(L1|L2)"  # Sixth and seventh characters are 'L1' or L2' = processing level
+            r"(TP|GT|GS|SP|SR)"  # Eighth and ninth characters are either 'TP', 'GT', or 'GS' (L05-07); or 'SR' [=SR only] or 'ST' [=SR+ST] (L08-09)
             r"_"  # Tenth character is '_'
-            r"\d{3}"  # Characters eleven to thirteen are a group of 3 digits
-            r"\d{3}"  # Characters fourteen to sixteen are a group of 3 digits
+            r"\d{3}"  # Characters eleven to thirteen are a group of 3 digits = WRS path
+            r"\d{3}"  # Characters fourteen to sixteen are a group of 3 digits = WRS row
             r"_"  # Seventeenth character is '_'
-            r"\d{4}"  # Characters eighteen to twenty-one are a group of four digits representing a valid year
-            r"(0[1-9]|1[0-2])"  # Characters twenty-two and twenty-three are a group of two digits representing a zero-padded month
-            r"(0[1-9]|[12]\d|3[01])"  # Characters twenty-four and twenty-five are a group of two digits representing a zero-padded day
+            r"\d{4}"  # Characters eighteen to twenty-one are a group of four digits representing a valid year = acquisition year
+            r"(0[1-9]|1[0-2])"  # Characters twenty-two and twenty-three are a group of two digits representing a zero-padded month = acquisition month
+            r"(0[1-9]|[12]\d|3[01])"  # Characters twenty-four and twenty-five are a group of two digits representing a zero-padded day = acquisition day
             r"_"  # The twenty-fifth character is '_'
-            r"\d{4}"  # Characters twenty-six to twenty-nine are a group of four digits representing a valid year
-            r"(0[1-9]|1[0-2])"  # Characters thirty and thirty-one are a group of two digits representing a zero-padded month
-            r"(0[1-9]|[12]\d|3[01])"  # Characters thirty-two and thirty-three are a group of two digits representing a zero-padded day
+            r"\d{4}"  # Characters twenty-six to twenty-nine are a group of four digits representing a valid year = processing year
+            r"(0[1-9]|1[0-2])"  # Characters thirty and thirty-one are a group of two digits representing a zero-padded month = processing month
+            r"(0[1-9]|[12]\d|3[01])"  # Characters thirty-two and thirty-three are a group of two digits representing a zero-padded day = processing day
             r"_"  # The thirty-fourth character is '_'
-            r"\d{2}"  # Characters thirty-five and thirty-six are a group of two digits
+            r"\d{2}"  # Characters thirty-five and thirty-six are a group of two digits = collection number
             r"_"  # The thirty-seventh character is '_'
-            r"(RT|T1|T2)$"  # Characters thirty-eight and thirty-nine are either 'RT', 'T1', or 'T2'
+            r"(RT|T1|T2)$"  # Characters thirty-eight and thirty-nine are either 'RT', 'T1', or 'T2' = collection category
         )
 
         if f_r.match(scene) is not None:
@@ -108,9 +108,7 @@ class Scene:
             self._spacecraft_id = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
                 "SPACECRAFT_ID"
             ]
-            match self._spacecraft_id:
-                case "LANDSAT_7":
-                    self._lambda_thermal = 0.0001145
+
             self._sensor_id = mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"][
                 "SENSOR_ID"
             ]
@@ -133,25 +131,70 @@ class Scene:
                 mtl["LANDSAT_METADATA_FILE"]["IMAGE_ATTRIBUTES"]["EARTH_SUN_DISTANCE"]
             )
 
-            self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
-            self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
-            self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
-            self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
-            self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
-            self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
-            self.B8 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "8"))
+            self._processing_level = mtl["LANDSAT_METADATA_FILE"]["PRODUCT_CONTENTS"]["PROCESSING_LEVEL"]
 
-            self.B6_VCID_1: ThermalBand = ThermalBand(
-                *self.get_thermal_band_info(mtl, "6_VCID_1")
-            )
-            self.B6_VCID_2: ThermalBand = ThermalBand(
-                *self.get_thermal_band_info(mtl, "6_VCID_2")
-            )
+            '''
+            Options:
+            1. match processing level here, and have self.get_L1R_info(), self.get_L1T_info(), self.get_L2R_info(), self.get_L2T_info()
+                Would mean new/modified band subclasses ReflectanceBandL1, ReflectanceBandL2, ThermalBandL1, ThermalBandL2, ProcessedBandL1, ProcessedBandL2 
+            2. match only spacecraft here, and have self.get_reflectance_band_info() and self.get_thermal_band_info() return L2 metadata if L2
+                Would mean changing band subclass args to include L2 params, and have methods check for L1/L2 and use L2 params if L2
+            '''
 
-            if vcid == 1:
-                self.B6 = self.B6_VCID_1
-            elif vcid == 2:
-                self.B6 = self.B6_VCID_2
+            match self._spacecraft_id:
+                case "LANDSAT_5":
+                    self._lambda_thermal = 0.0001145
+                    match self._processing_level[:2]:
+                            case "L1":
+                                self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
+                                self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
+                                self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
+                                self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
+                                self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
+                                self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
+                                self.B6: ThermalBand = ThermalBand(*self.get_thermal_band_info(mtl, "6"))
+                            case "L2":
+                                pass
+                case "LANDSAT_7":
+                    self._lambda_thermal = 0.0001145
+                    match self._processing_level[:2]:
+                            case "L1":
+                                self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
+                                self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
+                                self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
+                                self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
+                                self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
+                                self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
+                                self.B8 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "8"))
+                                self.B6_VCID_1: ThermalBand = ThermalBand(*self.get_thermal_band_info(mtl, "6_VCID_1"))
+                                self.B6_VCID_2: ThermalBand = ThermalBand(*self.get_thermal_band_info(mtl, "6_VCID_2"))
+                                if vcid == 1:
+                                    self.B6 = self.B6_VCID_1
+                                elif vcid == 2:
+                                    self.B6 = self.B6_VCID_2
+                            case "L2":
+                                pass
+                case "LANDSAT_8":
+                    self._lambda_thermal = 0.0001090
+                    match self._processing_level[:2]:
+                            case "L1":
+                                # needs to be added
+                                pass
+                            case "L2":
+                                # needs to be added
+                                pass
+                case "LANDSAT_9":
+                    self._lambda_thermal = 0.0001090
+                    match self._processing_level[:2]:
+                            case "L1":
+                                # needs to be added, Thermal is Band 10
+                                pass
+                            case "L2":
+                                # needs to be added, Thermal is Band 10
+                                pass
+            
+
+            
         self.processed_bands = {}
 
         self.ndvi_min = 0.2
@@ -374,6 +417,25 @@ class Scene:
         )
 
     def create_processed_band(self, name: str, meta: dict, info: str):
+        '''
+        Creates an object of Class ProcessedBand from args and self_attrs:
+        name -> band: str,
+        self.scene -> scene: str,
+        self.spacecraft_id -> spacecraft_id: str,
+        self.sensor_id -> sensor_id: str,
+        self.date_acquired -> date_acquired: dt.date,
+        self.scene_center_time -> scene_center_time: dt.time,
+        self.scene_center_datetime -> scene_center_datetime: dt.datetime,
+        self.sun_azimuth -> sun_azimuth: float,
+        self.sun_elevation -> sun_elevation: float,
+        self.earth_sun_distance -> earth_sun_distance: float,
+        f"{self.scene}_{name}.TIF" -> filename: str,
+        self.folder ->  folder: str,
+        os.path.join(self.folder, f"{self.scene}_{name}.TIF") -> path: object,
+        meta["dtype"] -> dtype: object,
+        meta -> meta: dict = None,
+        info -> info: str = None,
+        '''
         self.processed_bands[name] = ProcessedBand(
             name,
             self.scene,
@@ -385,16 +447,16 @@ class Scene:
             self.sun_azimuth,
             self.sun_elevation,
             self.earth_sun_distance,
-            f"{name}.TIF",
+            f"{self.scene}_{name}.TIF",
             self.folder,
-            os.path.join(self.folder, f"{name}.TIF"),
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF"),
             meta["dtype"],
             meta,
             info,
         )
 
     def save(self, name: str, out_meta: dict, data: Any) -> None:
-        file_path = os.path.join(self.folder, f"{name}.TIF")
+        file_path = os.path.join(self.folder, f"{self.scene}_{name}.TIF")
         with rasterio.open(file_path, "w", **out_meta) as dst:
             dst.write(data, 1)
 
@@ -404,8 +466,10 @@ class Scene:
         ndvi = (b4_float - b3_float) / (b4_float + b3_float)
         ndvi_meta = self.B3.meta.copy()
         ndvi_meta.update(dtype=np.float64, nodata=np.nan)
+        self.ndvi_min = ndvi.min()
+        self.ndvi_max = ndvi.max()
         if save:
-            self.save(f"{self.scene}_NDVI", ndvi_meta, ndvi)
+            self.save("NDVI", ndvi_meta, ndvi)
             self.create_processed_band("NDVI", ndvi_meta, info="NDVI")
         if ret:
             return ndvi, ndvi_meta
@@ -428,7 +492,7 @@ class Scene:
         pv = (ndvi_clip - ndvi_min) / (ndvi_max - ndvi_min)
         pv_clip = np.clip(pv, 0, 1)
         if save:
-            self.save(f"{self.scene}_PV", pv_meta, pv_clip)
+            self.save("PV", pv_meta, pv_clip)
             self.create_processed_band("PV", pv_meta, info="PV")
         if ret:
             return pv_clip, pv_meta
@@ -439,7 +503,7 @@ class Scene:
         lse = 0.004 * pv + 0.986
         lse_clip = np.clip(lse, 0.98, 1.0)
         if save:
-            self.save(f"{self.scene}_LSE", lse_meta, lse_clip)
+            self.save("LSE", lse_meta, lse_clip)
             self.create_processed_band("LSE", lse_meta, info="LSE")
         if ret:
             return lse_clip, lse_meta
@@ -457,7 +521,7 @@ class Scene:
         lst_kelvin = bt / (1 + lambda_bt_ratio * log_lse)
         lst = lst_kelvin - 273.15
         if save:
-            self.save(f"{self.scene}_LST", lse_meta, lst)
+            self.save("LST", lse_meta, lst)
             self.create_processed_band("LST", lse_meta, info="LST")
         if ret:
             return lst, lse_meta
@@ -469,7 +533,7 @@ class Scene:
         ndsi_meta = self.B2.meta.copy()
         ndsi_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
-            self.save(f"{self.scene}_NDSI", ndsi_meta, ndsi)
+            self.save("NDSI", ndsi_meta, ndsi)
             self.create_processed_band("NDSI", ndsi_meta, info="NDSI")
         if ret:
             return ndsi, ndsi_meta
@@ -492,7 +556,7 @@ class Scene:
         cells: int,
         gdf: gpd.GeoDataFrame = None,
         save: bool = True,
-        fmt: str = "feather",
+        fmt: str = "parquet",
         ret: bool = False,
     ):
         if gdf is None:
@@ -567,7 +631,7 @@ class Scene:
         self.calculate_lst()
         self.calculate_ndsi()
         for band in self.processed_bands.values():
-            self.get_average_around_points(band, 3)
+            self.get_average_around_points(band, 5)
 
 
 class Band:
@@ -719,7 +783,7 @@ class Band:
         return band64
 
     def save(self, name: str, out_meta: dict, data: Any) -> None:
-        file_path = os.path.join(self.folder, f"{name}.TIF")
+        file_path = os.path.join(self.folder, f"{self.scene}_{name}.TIF")
         with rasterio.open(file_path, "w", **out_meta) as dst:
             dst.write(data, 1)
 
@@ -757,6 +821,26 @@ class ReflectanceBand(Band):
         """
         Class to handle Landsat reflectance bands
         """
+
+        '''
+        super().__init__() sends to __init__() of parent Class Band:
+            band -> band: str,
+            scene -> scene: str,
+            spacecraft_id -> spacecraft_id: str,
+            sensor_id -> sensor_id: str,
+            date_acquired -> date_acquired: dt.date,
+            scene_center_time -> scene_center_time: dt.time,
+            scene_center_datetime -> scene_center_datetime: dt.datetime,
+            sun_azimuth -> sun_azimuth: float,
+            sun_elevation -> sun_elevation: float,
+            earth_sun_distance -> earth_sun_distance: float,
+            filename -> filename: str,
+            folder -> folder: str,
+            path -> path: object,
+            dtype -> dtype: object,
+            meta -> meta: dict = None,
+             -> crs: object = None,
+        '''
         super().__init__(
             band,
             scene,
@@ -836,6 +920,35 @@ class ReflectanceBand(Band):
         self._reflectance = value
 
     def create_reflectance_band(self, name: str, meta: dict):
+        '''
+        Creates a new object of Class ReflectanceBand by sending:
+        name -> band: str,
+        self.scene -> scene: str,
+        self.spacecraft_id -> spacecraft_id: str,
+        self.sensor_id -> sensor_id: str,
+        self.date_acquired -> date_acquired: dt.date,
+        self.scene_center_time -> scene_center_time: dt.time,
+        self.scene_center_datetime -> scene_center_datetime: dt.datetime,
+        self.sun_azimuth -> sun_azimuth: float,
+        self.sun_elevation -> sun_elevation: float,
+        self.earth_sun_distance -> earth_sun_distance: float,
+        f"{self.scene}_{name}.TIF" -> filename: str,
+        self.folder -> folder: str,
+        os.path.join(self.folder, f"{self.scene}_{name}.TIF") -> path: object,
+        meta["dtype"] -> dtype: object,
+        self.maxradiance -> maxradiance: float,
+        self.minradiance -> minradiance: float,
+        self.maxreflectance -> maxreflectance: float,
+        self.minreflectance -> minreflectance: float,
+        self.maxqcal -> maxqcal: int,
+        self.minqcal -> minqcal: int,
+        self.gain_rad -> gain_rad: float,
+        self.offset_rad -> offset_rad: float,
+        self.gain_ref -> gain_ref: float,
+        self.offset_ref -> offset_ref: float,
+        meta -> meta: dict = None,
+         -> reflectance: bool = False,
+        '''
         globals()[name] = ReflectanceBand(
             name,
             self.scene,
@@ -847,10 +960,10 @@ class ReflectanceBand(Band):
             self.sun_azimuth,
             self.sun_elevation,
             self.earth_sun_distance,
-            f"{name}.TIF",
+            f"{self.scene}_{name}.TIF",
             self.folder,
-            os.path.join(self.folder, f"{name}.TIF"),
-            self.dtype,
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF"),
+            meta["dtype"],
             self.maxradiance,
             self.minradiance,
             self.maxreflectance,
@@ -932,8 +1045,28 @@ class ThermalBand(Band):
         meta: dict = None,
     ):
         """
-        Class to handle Landsat bands
+        Class to handle Landsat Thermal Bands
         """
+
+        '''
+        super().__init__() sends to __init__() of parent Class Band:
+            band -> band: str,
+            scene -> scene: str,
+            spacecraft_id -> spacecraft_id: str,
+            sensor_id -> sensor_id: str,
+            date_acquired -> date_acquired: dt.date,
+            scene_center_time -> scene_center_time: dt.time,
+            scene_center_datetime -> scene_center_datetime: dt.datetime,
+            sun_azimuth -> sun_azimuth: float,
+            sun_elevation -> sun_elevation: float,
+            earth_sun_distance -> earth_sun_distance: float,
+            filename -> filename: str,
+            folder -> folder: str,
+            path -> path: object,
+            dtype -> dtype: object,
+            meta -> meta: dict = None,
+             -> crs: object = None,
+        '''
         super().__init__(
             band,
             scene,
@@ -1032,6 +1165,33 @@ class ThermalBand(Band):
         self._toa = value
 
     def create_thermal_band(self, name: str, meta: dict):
+        '''
+        Creates a new object of Class ThermalBand by sending:
+            name -> band: str,
+            self.scene -> scene: str,
+            self.spacecraft_id -> spacecraft_id: str,
+            self.sensor_id -> sensor_id: str,
+            self.date_acquired -> date_acquired: dt.date,
+            self.scene_center_time -> scene_center_time: dt.time,
+            self.scene_center_datetime -> scene_center_datetime: dt.datetime,
+            self.sun_azimuth -> sun_azimuth: float,
+            self.sun_elevation -> sun_elevation: float,
+            self.earth_sun_distance -> earth_sun_distance: float,
+            f"{self.scene}_{name}.TIF" -> filename: str,
+            self.folder -> folder: str,
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF") -> path: object,
+            meta["dtype"] -> dtype: object,
+            self.maxradiance -> maxradiance: float,
+            self.minradiance -> minradiance: float,
+            self.maxqcal -> maxqcal: int,
+            self.minqcal -> minqcal: int,
+            self.gain_rad -> gain_rad: float,
+            self.offset_rad -> offset_rad: float,
+            self.k1 -> k1: float,
+            self.k2 -> k2: float,
+            self.lambda_thermal -> lambda_thermal: float,
+            meta -> meta: dict = None,
+        '''
         globals()[name] = ThermalBand(
             name,
             self.scene,
@@ -1043,10 +1203,10 @@ class ThermalBand(Band):
             self.sun_azimuth,
             self.sun_elevation,
             self.earth_sun_distance,
-            f"{name}.TIF",
+            f"{self.scene}_{name}.TIF",
             self.folder,
-            os.path.join(self.folder, f"{name}.TIF"),
-            self.dtype,
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF"),
+            meta["dtype"],
             self.maxradiance,
             self.minradiance,
             self.maxqcal,
@@ -1088,7 +1248,7 @@ class ThermalBand(Band):
         rescaled_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
             if not name:
-                name = f"{self.scene}_{self.band}_TOA"
+                name = f"{self.band}_TOA"
             self.save(name, rescaled_meta, band_rescaled)
             self.create_thermal_band(name, rescaled_meta)
             self.toa = name
@@ -1107,7 +1267,7 @@ class ThermalBand(Band):
         bt_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
             if not name:
-                name = f"{self.scene}_{self.band}_BT"
+                name = f"{self.band}_BT"
             self.save(name, bt_meta, bt)
             self.create_thermal_band(name, bt_meta)
             self.toa = name
@@ -1138,6 +1298,26 @@ class ProcessedBand(Band):
         """
         Class to handle Landsat reflectance bands
         """
+        
+        '''
+        super().__init__() sends to __init__() of parent Class Band:
+            band -> band: str,
+            scene -> scene: str,
+            spacecraft_id -> spacecraft_id: str,
+            sensor_id -> sensor_id: str,
+            date_acquired -> date_acquired: dt.date,
+            scene_center_time -> scene_center_time: dt.time,
+            scene_center_datetime -> scene_center_datetime: dt.datetime,
+            sun_azimuth -> sun_azimuth: float,
+            sun_elevation -> sun_elevation: float,
+            earth_sun_distance -> earth_sun_distance: float,
+            filename -> filename: str,
+            folder -> folder: str,
+            path -> path: object,
+            dtype -> dtype: object,
+            meta -> meta: dict = None,
+             -> crs: object = None,
+        '''
         super().__init__(
             band,
             scene,
@@ -1173,9 +1353,9 @@ class ProcessedBand(Band):
             self.sun_azimuth,
             self.sun_elevation,
             self.earth_sun_distance,
-            f"{name}.TIF",
+            f"{self.scene}_{name}.TIF",
             self.folder,
-            os.path.join(self.folder, f"{name}.TIF"),
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF"),
             self.dtype,
             meta,
             info,
