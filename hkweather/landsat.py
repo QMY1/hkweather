@@ -1,6 +1,7 @@
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import rasterio
 import rasterio.plot
@@ -61,7 +62,7 @@ class Scene:
             r"[COTEM]"  # Second character is either 'C' [=OLI+TIRS], 'O' [=OLI], 'T' [L05: =TM; L08-09: =TIRS], 'E' [=ETM+], or 'M' [=MSS] (sensor)
             r"(05|07|08|09)"  # Third and fourth characters are either '05', '07', '08' or '09' = satellite
             r"_"  # Fifth character is '_'
-            r"(L1|L2)"  # Sixth and seventh characters are 'L1' or L2' = processing level
+            r"(L1|L2)"  # Sixth and seventh characters are 'L1' or 'L2' = processing level
             r"(TP|GT|GS|SP|SR)"  # Eighth and ninth characters are either 'TP', 'GT', or 'GS' (L05-07); or 'SR' [=SR only] or 'ST' [=SR+ST] (L08-09)
             r"_"  # Tenth character is '_'
             r"\d{3}"  # Characters eleven to thirteen are a group of 3 digits = WRS path
@@ -88,18 +89,20 @@ class Scene:
 
         self._scene = scene
 
-        if folder is not None:
-            if os.path.isdir(folder):
-                self._folder = folder
-            elif os.path.isdir(os.path.join("data", scene)):
-                self._folder = os.path.join("data", scene)
-            elif os.path.isdir(os.path.join("../data", scene)):
-                self._folder = os.path.join("../data", scene)
-            else:
+        candidates = [
+            folder,
+            os.path.join("data", scene),
+            os.path.join("../data", scene)
+        ]
+
+        for candidate in candidates:
+            if not os.path.isdir(candidate):
                 raise ValueError(
                     "Cannot find scene folder: please declare a valid folder"
                 )
 
+            self._folder = candidate
+            break
         self.metadata = os.path.join(self.folder, f"{self.scene}_MTL.JSON")
 
         with open(self.metadata, "r") as j:
@@ -144,61 +147,80 @@ class Scene:
             match self._spacecraft_id:
                 case "LANDSAT_5":
                     self._lambda_thermal = 0.0001145
+                    self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
+                    self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
+                    self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
+                    self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
+                    self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
+                    self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
                     match self._processing_level[:2]:
                             case "L1":
-                                self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
-                                self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
-                                self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
-                                self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
-                                self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
-                                self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
-                                self.B6: ThermalBand = ThermalBand(*self.get_thermal_band_info(mtl, "6"))
+                                self.B6 = ThermalBand(*self.get_thermal_band_info(mtl, "6"))
                             case "L2":
-                                pass
+                                self.B6 = L2ThermalBand(*self.get_thermal_band_info(mtl, "6"))
+                    self.thermal = self.B6
                 case "LANDSAT_7":
                     self._lambda_thermal = 0.0001145
+                    self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
+                    self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
+                    self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
+                    self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
+                    self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
+                    self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
                     match self._processing_level[:2]:
                             case "L1":
-                                self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
-                                self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
-                                self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
-                                self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
-                                self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
-                                self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
-                                self.B8 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "8"))
-                                self.B6_VCID_1: ThermalBand = ThermalBand(*self.get_thermal_band_info(mtl, "6_VCID_1"))
-                                self.B6_VCID_2: ThermalBand = ThermalBand(*self.get_thermal_band_info(mtl, "6_VCID_2"))
+                                self.B6_VCID_1 = ThermalBand(*self.get_thermal_band_info(mtl, "6_VCID_1"))
+                                self.B6_VCID_2 = ThermalBand(*self.get_thermal_band_info(mtl, "6_VCID_2"))
                                 if vcid == 1:
                                     self.B6 = self.B6_VCID_1
                                 elif vcid == 2:
                                     self.B6 = self.B6_VCID_2
                             case "L2":
-                                pass
+                                self.B6 = L2ThermalBand(*self.get_thermal_band_info(mtl, "6"))
+
+                    self.thermal = self.B6
                 case "LANDSAT_8":
                     self._lambda_thermal = 0.0001090
+                    self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
+                    self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
+                    self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
+                    self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
+                    self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
+                    self.B6 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "6"))
+                    self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
+                    self.B8 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "8"))
+                    self.B9 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "9"))
                     match self._processing_level[:2]:
                             case "L1":
-                                # needs to be added
-                                pass
+                                self.B10 = ThermalBand(*self.get_thermal_band_info(mtl, "10"))
                             case "L2":
-                                # needs to be added
-                                pass
+                                self.B10 = L2ThermalBand(*self.get_thermal_band_info(mtl, "10"))
+                    self.thermal = self.B10
                 case "LANDSAT_9":
                     self._lambda_thermal = 0.0001090
+                    self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
+                    self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
+                    self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
+                    self.B4 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "4"))
+                    self.B5 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "5"))
+                    self.B6 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "6"))
+                    self.B7 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "7"))
+                    self.B8 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "8"))
+                    self.B9 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "9"))
                     match self._processing_level[:2]:
                             case "L1":
-                                # needs to be added, Thermal is Band 10
-                                pass
+                                self.B10 = ThermalBand(*self.get_thermal_band_info(mtl, "10"))
                             case "L2":
-                                # needs to be added, Thermal is Band 10
-                                pass
-            
+                                self.B10 = L2ThermalBand(*self.get_thermal_band_info(mtl, "10"))
+                    self.thermal = self.B10
 
-            
+        self._bands = {}
         self.processed_bands = {}
 
         self.ndvi_min = 0.2
         self.ndvi_max = 0.5
+
+        self._df = pd.DataFrame(columns=['date','aplot_date','Tmax','Tmin','precipitation','NDVI','NDSI','LST'])
 
     @property
     def scene(self):
@@ -252,86 +274,98 @@ class Scene:
         dtype = mtl["LANDSAT_METADATA_FILE"]["PRODUCT_CONTENTS"][
             f"DATA_TYPE_BAND_{band}"
         ]
-        maxradiance = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_RADIANCE"][
-                f"RADIANCE_MAXIMUM_BAND_{band}"
-            ]
-        )
-        minradiance = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_RADIANCE"][
-                f"RADIANCE_MINIMUM_BAND_{band}"
-            ]
-        )
-        maxqcal = int(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_PIXEL_VALUE"][
-                f"QUANTIZE_CAL_MAX_BAND_{band}"
-            ]
-        )
-        minqcal = int(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_PIXEL_VALUE"][
-                f"QUANTIZE_CAL_MIN_BAND_{band}"
-            ]
-        )
-        gain_rad = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
-                f"RADIANCE_MULT_BAND_{band}"
-            ]
-        )
-        offset_rad = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
-                f"RADIANCE_ADD_BAND_{band}"
-            ]
-        )
+
 
         return (
             filename,
             path,
             dtype,
-            maxradiance,
-            minradiance,
-            maxqcal,
-            minqcal,
-            gain_rad,
-            offset_rad,
         )
 
     def get_reflectance_info(self, mtl, band):
-        maxreflectance = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_REFLECTANCE"][
-                f"REFLECTANCE_MAXIMUM_BAND_{band}"
-            ]
-        )
-        minreflectance = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_REFLECTANCE"][
-                f"REFLECTANCE_MINIMUM_BAND_{band}"
-            ]
-        )
-        gain_ref = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
-                f"REFLECTANCE_MULT_BAND_{band}"
-            ]
-        )
-        offset_ref = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
-                f"REFLECTANCE_ADD_BAND_{band}"
-            ]
-        )
+        match self._processing_level[:2]:
+                case "L1":
+                    maxqcal = int(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_PIXEL_VALUE"][
+                            f"QUANTIZE_CAL_MAX_BAND_{band}"
+                        ]
+                    )
+                    minqcal = int(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_PIXEL_VALUE"][
+                            f"QUANTIZE_CAL_MIN_BAND_{band}"
+                        ]
+                    )
+                    maxreflectance = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_REFLECTANCE"][
+                            f"REFLECTANCE_MAXIMUM_BAND_{band}"
+                        ]
+                    )
+                    minreflectance = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_REFLECTANCE"][
+                            f"REFLECTANCE_MINIMUM_BAND_{band}"
+                        ]
+                    )
+                    gain_ref = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
+                            f"REFLECTANCE_MULT_BAND_{band}"
+                        ]
+                    )
+                    offset_ref = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
+                            f"REFLECTANCE_ADD_BAND_{band}"
+                        ]
+                    )
+                case "L2":
+                    maxqcal = int(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_REFLECTANCE_PARAMETERS"][
+                            f"QUANTIZE_CAL_MAX_BAND_{band}"
+                        ]
+                    )
+                    minqcal = int(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_REFLECTANCE_PARAMETERS"][
+                            f"QUANTIZE_CAL_MIN_BAND_{band}"
+                        ]
+                    )
+                    maxreflectance = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_REFLECTANCE_PARAMETERS"][
+                            f"REFLECTANCE_MAXIMUM_BAND_{band}"
+                        ]
+                    )
+                    minreflectance = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_REFLECTANCE_PARAMETERS"][
+                            f"REFLECTANCE_MINIMUM_BAND_{band}"
+                        ]
+                    )
+                    gain_ref = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_REFLECTANCE_PARAMETERS"][
+                            f"REFLECTANCE_MULT_BAND_{band}"
+                        ]
+                    )
+                    offset_ref = float(
+                        mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_REFLECTANCE_PARAMETERS"][
+                            f"REFLECTANCE_ADD_BAND_{band}"
+                        ]
+                    )
 
-        return maxreflectance, minreflectance, gain_ref, offset_ref
+
+        return (
+            maxqcal,
+            minqcal,
+            maxreflectance, 
+            minreflectance, 
+            gain_ref, 
+            offset_ref,
+        )
 
     def get_reflectance_band_info(self, mtl, bandkey):
         (
             filename,
             path,
             dtype,
-            maxradiance,
-            minradiance,
-            maxqcal,
-            minqcal,
-            gain_rad,
-            offset_rad,
         ) = self.get_shared_band_info(mtl, bandkey)
         (
+            maxqcal,
+            minqcal,
             maxreflectance,
             minreflectance,
             gain_ref,
@@ -352,44 +386,126 @@ class Scene:
             self.folder,
             path,
             dtype,
-            maxradiance,
-            minradiance,
             maxreflectance,
             minreflectance,
             maxqcal,
             minqcal,
-            gain_rad,
-            offset_rad,
             gain_ref,
             offset_ref,
         )
 
     def get_thermal_info(self, mtl, band):
-        k1 = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_THERMAL_CONSTANTS"][
-                f"K1_CONSTANT_BAND_{band}"
-            ]
-        )
-        k2 = float(
-            mtl["LANDSAT_METADATA_FILE"]["LEVEL1_THERMAL_CONSTANTS"][
-                f"K2_CONSTANT_BAND_{band}"
-            ]
-        )
-        return k1, k2
+        match self._processing_level[:2]:
+            case "L1":
+                maxradiance = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_RADIANCE"][
+                        f"RADIANCE_MAXIMUM_BAND_{band}"
+                    ]
+                )
+                minradiance = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_RADIANCE"][
+                        f"RADIANCE_MINIMUM_BAND_{band}"
+                    ]
+                )
+                maxqcal = int(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_PIXEL_VALUE"][
+                        f"QUANTIZE_CAL_MAX_BAND_{band}"
+                    ]
+                )
+                minqcal = int(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_MIN_MAX_PIXEL_VALUE"][
+                        f"QUANTIZE_CAL_MIN_BAND_{band}"
+                    ]
+                )
+                gain_rad = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
+                        f"RADIANCE_MULT_BAND_{band}"
+                    ]
+                )
+                offset_rad = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_RADIOMETRIC_RESCALING"][
+                        f"RADIANCE_ADD_BAND_{band}"
+                    ]
+                )
+                k1 = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_THERMAL_CONSTANTS"][
+                        f"K1_CONSTANT_BAND_{band}"
+                    ]
+                )
+                k2 = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL1_THERMAL_CONSTANTS"][
+                        f"K2_CONSTANT_BAND_{band}"
+                    ]
+                )
+                return (
+                    maxradiance,
+                    minradiance,
+                    maxqcal,
+                    minqcal,
+                    gain_rad,
+                    offset_rad,
+                    k1,
+                    k2,
+                )    
+            case "L2":
+                maxtemp = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_TEMPERATURE_PARAMETERS"][
+                        f"TEMPERATURE_MAXIMUM_BAND_ST_{band}"
+                    ]
+                )
+                mintemp = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_TEMPERATURE_PARAMETERS"][
+                        f"TEMPERATURE_MINIMUM_BAND_ST_{band}"
+                    ]
+                )
+                maxqcal = int(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_TEMPERATURE_PARAMETERS"][
+                        f"QUANTIZE_CAL_MAX_BAND_{band}"
+                    ]
+                )
+                minqcal = int(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_TEMPERATURE_PARAMETERS"][
+                        f"QUANTIZE_CAL_MIN_BAND_ST_{band}"
+                    ]
+                )
+                gain_temp = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_TEMPERATURE_PARAMETERS"][
+                        f"TEMPERATURE_MULT_BAND_ST_{band}"
+                    ]
+                )
+                offset_temp = float(
+                    mtl["LANDSAT_METADATA_FILE"]["LEVEL2_SURFACE_TEMPERATURE_PARAMETERS"][
+                        f"TEMPERATURE_ADD_BAND_ST_{band}"
+                    ]
+                )
+                k1 = None
+                k2 = None
+                return (
+                    maxtemp,
+                    mintemp,
+                    maxqcal,
+                    minqcal,
+                    gain_temp,
+                    offset_temp,
+                    k1,
+                    k2,
+                )  
 
     def get_thermal_band_info(self, mtl, bandkey):
         (
             filename,
             path,
             dtype,
-            maxradiance,
+        ) = self.get_shared_band_info(mtl, bandkey)
+        (   maxradiance,
             minradiance,
             maxqcal,
             minqcal,
             gain_rad,
             offset_rad,
-        ) = self.get_shared_band_info(mtl, bandkey)
-        k1, k2 = self.get_thermal_info(mtl, bandkey)
+            k1, 
+            k2,
+        ) = self.get_thermal_info(mtl, bandkey)
         return (
             bandkey,
             self.scene,
@@ -417,7 +533,7 @@ class Scene:
         )
 
     def create_processed_band(self, name: str, meta: dict, info: str):
-        '''
+        """
         Creates an object of Class ProcessedBand from args and self_attrs:
         name -> band: str,
         self.scene -> scene: str,
@@ -429,13 +545,13 @@ class Scene:
         self.sun_azimuth -> sun_azimuth: float,
         self.sun_elevation -> sun_elevation: float,
         self.earth_sun_distance -> earth_sun_distance: float,
-        f"{self.scene}_{name}.TIF" -> filename: str,
+        f'{self.scene}_{name}.TIF' -> filename: str,
         self.folder ->  folder: str,
-        os.path.join(self.folder, f"{self.scene}_{name}.TIF") -> path: object,
+        os.path.join(self.folder, f'{self.scene}_{name}.TIF') -> path: object,
         meta["dtype"] -> dtype: object,
         meta -> meta: dict = None,
         info -> info: str = None,
-        '''
+        """
         self.processed_bands[name] = ProcessedBand(
             name,
             self.scene,
@@ -461,10 +577,27 @@ class Scene:
             dst.write(data, 1)
 
     def calculate_ndvi(self, save: bool = True, ret: bool = False):
-        b3_float = self.B3.to_float()
-        b4_float = self.B4.to_float()
-        ndvi = (b4_float - b3_float) / (b4_float + b3_float)
-        ndvi_meta = self.B3.meta.copy()
+        match self._spacecraft_id:
+                case "LANDSAT_5":
+                    b3_float = self.B3.to_float()
+                    b4_float = self.B4.to_float()
+                    ndvi = (b4_float - b3_float) / (b4_float + b3_float)
+                    ndvi_meta = self.B3.meta.copy()
+                case "LANDSAT_7":
+                    b3_float = self.B3.to_float()
+                    b4_float = self.B4.to_float()
+                    ndvi = (b4_float - b3_float) / (b4_float + b3_float)
+                    ndvi_meta = self.B3.meta.copy()
+                case "LANDSAT_8":
+                    b4_float = self.B4.to_float()
+                    b5_float = self.B5.to_float()
+                    ndvi = (b5_float - b4_float) / (b5_float + b4_float)
+                    ndvi_meta = self.B4.meta.copy()
+                case "LANDSAT_9":
+                    b4_float = self.B4.to_float()
+                    b5_float = self.B5.to_float()
+                    ndvi = (b5_float - b4_float) / (b5_float + b4_float)
+                    ndvi_meta = self.B4.meta.copy()
         ndvi_meta.update(dtype=np.float64, nodata=np.nan)
         self.ndvi_min = ndvi.min()
         self.ndvi_max = ndvi.max()
@@ -512,12 +645,11 @@ class Scene:
         self, bt=None, lse=None, c2=1.438, save: bool = True, ret: bool = False
     ):
         if bt is None:
-            bt, bt_meta = self.B6.calculate_bt(ret=True)
+            bt, bt_meta = self.thermal.calculate_bt(ret=True)
         if lse is None:
             lse, lse_meta = self.calculate_lse(ret=True)
         lambda_bt_ratio = (self.lambda_thermal * bt) / c2
         log_lse = np.log(lse)
-        log_lse = np.clip(log_lse, -20, 20)
         lst_kelvin = bt / (1 + lambda_bt_ratio * log_lse)
         lst = lst_kelvin - 273.15
         if save:
@@ -527,10 +659,28 @@ class Scene:
             return lst, lse_meta
 
     def calculate_ndsi(self, save: bool = True, ret: bool = False):
-        b2_float = self.B2.to_float()
-        b5_float = self.B5.to_float()
-        ndsi = (b2_float - b5_float) / (b2_float + b5_float)
-        ndsi_meta = self.B2.meta.copy()
+        match self._spacecraft_id:
+                case "LANDSAT_5":
+                    b2_float = self.B2.to_float()
+                    b5_float = self.B5.to_float()
+                    ndsi = (b2_float - b5_float) / (b2_float + b5_float)
+                    ndsi_meta = self.B2.meta.copy()
+                case "LANDSAT_7":
+                    b2_float = self.B2.to_float()
+                    b5_float = self.B5.to_float()
+                    ndsi = (b2_float - b5_float) / (b2_float + b5_float)
+                    ndsi_meta = self.B2.meta.copy()
+                case "LANDSAT_8":
+                    b3_float = self.B3.to_float()
+                    b6_float = self.B6.to_float()
+                    ndsi = (b3_float - b6_float) / (b3_float + b6_float)
+                    ndsi_meta = self.B3.meta.copy()
+                case "LANDSAT_9":
+                    b3_float = self.B3.to_float()
+                    b6_float = self.B6.to_float()
+                    ndsi = (b3_float - b6_float) / (b3_float + b6_float)
+                    ndsi_meta = self.B3.meta.copy()
+
         ndsi_meta.update(dtype=np.float64, nodata=np.nan)
         if save:
             self.save("NDSI", ndsi_meta, ndsi)
@@ -538,10 +688,12 @@ class Scene:
         if ret:
             return ndsi, ndsi_meta
 
-    def get_points(self, shapefile: str = None):
+    @staticmethod
+    def get_points(shapefile: str = None):
         if shapefile is None:
             shapefile = os.path.join("data", "locations.feather")
-        match shapefile.split(".")[1].strip():
+        file_extension = os.path.splitext(shapefile)[1].strip('.').lower()
+        match file_extension:
             case "feather":
                 gdf = gpd.read_feather(shapefile)
             case "parquet":
@@ -586,7 +738,7 @@ class Scene:
                 gdf.loc[index, f"{band.band}_{cells}px"] = average_value
 
                 # add the date and time to the geodataframe
-                gdf.loc[index, "date"] = band.scene_center_datetime
+                gdf.loc[index, "datetime"] = band.scene_center_datetime
 
         # re-index the geodataframe by the date
         gdf = gdf.set_index("date")
@@ -627,11 +779,25 @@ class Scene:
         if ret:
             return gdf
 
-    def process(self):
+    def process(self, ret: bool = False):
         self.calculate_lst()
         self.calculate_ndsi()
+        df = None
         for band in self.processed_bands.values():
-            self.get_average_around_points(band, 5)
+            if not ret:
+                self.get_average_around_points(band, 5, ret=ret)
+            else:
+                gdf = self.get_average_around_points(band, 5, ret=ret)
+                if df is None:
+                    df = gdf
+                else:
+                    df = df.join(gdf, lsuffix="DROP").filter(regex="^(?!.*DROP)")
+                    df = df.drop(columns="date")
+        if ret:
+            return df
+
+
+
 
 
 class Band:
@@ -805,14 +971,10 @@ class ReflectanceBand(Band):
         folder: str,
         path: object,
         dtype: object,
-        maxradiance: float,
-        minradiance: float,
         maxreflectance: float,
         minreflectance: float,
         maxqcal: int,
         minqcal: int,
-        gain_rad: float,
-        offset_rad: float,
         gain_ref: float,
         offset_ref: float,
         meta: dict = None,
@@ -858,26 +1020,16 @@ class ReflectanceBand(Band):
             dtype,
             meta,
         )
-        self._maxradiance = maxradiance
-        self._minradiance = minradiance
         self._maxreflectance = maxreflectance
         self._minreflectance = minreflectance
         self._maxqcal = maxqcal
         self._minqcal = minqcal
-        self._gain_rad = gain_rad
-        self._offset_rad = offset_rad
         self._gain_ref = gain_ref
         self._offset_ref = offset_ref
 
         self._reflectance = reflectance
+        self._bands = {}
 
-    @property
-    def maxradiance(self):
-        return self._maxradiance
-
-    @property
-    def minradiance(self):
-        return self._minradiance
 
     @property
     def maxreflectance(self):
@@ -896,14 +1048,6 @@ class ReflectanceBand(Band):
         return self._minqcal
 
     @property
-    def gain_rad(self):
-        return self._gain_rad
-
-    @property
-    def offset_rad(self):
-        return self._offset_rad
-
-    @property
     def gain_ref(self):
         return self._gain_ref
 
@@ -920,7 +1064,7 @@ class ReflectanceBand(Band):
         self._reflectance = value
 
     def create_reflectance_band(self, name: str, meta: dict):
-        '''
+        """
         Creates a new object of Class ReflectanceBand by sending:
         name -> band: str,
         self.scene -> scene: str,
@@ -936,20 +1080,16 @@ class ReflectanceBand(Band):
         self.folder -> folder: str,
         os.path.join(self.folder, f"{self.scene}_{name}.TIF") -> path: object,
         meta["dtype"] -> dtype: object,
-        self.maxradiance -> maxradiance: float,
-        self.minradiance -> minradiance: float,
         self.maxreflectance -> maxreflectance: float,
         self.minreflectance -> minreflectance: float,
         self.maxqcal -> maxqcal: int,
         self.minqcal -> minqcal: int,
-        self.gain_rad -> gain_rad: float,
-        self.offset_rad -> offset_rad: float,
         self.gain_ref -> gain_ref: float,
         self.offset_ref -> offset_ref: float,
         meta -> meta: dict = None,
          -> reflectance: bool = False,
-        '''
-        globals()[name] = ReflectanceBand(
+        """
+        self._bands[name] = ReflectanceBand(
             name,
             self.scene,
             self.spacecraft_id,
@@ -964,14 +1104,10 @@ class ReflectanceBand(Band):
             self.folder,
             os.path.join(self.folder, f"{self.scene}_{name}.TIF"),
             meta["dtype"],
-            self.maxradiance,
-            self.minradiance,
             self.maxreflectance,
             self.minreflectance,
             self.maxqcal,
             self.minqcal,
-            self.gain_rad,
-            self.offset_rad,
             self.gain_ref,
             self.offset_ref,
             meta,
@@ -1097,6 +1233,8 @@ class ThermalBand(Band):
         self._resample_index = 0
         self._toa = None
 
+        self._bands = {}
+
         if meta is not None:
             self._meta = meta
         else:
@@ -1165,7 +1303,7 @@ class ThermalBand(Band):
         self._toa = value
 
     def create_thermal_band(self, name: str, meta: dict):
-        '''
+        """
         Creates a new object of Class ThermalBand by sending:
             name -> band: str,
             self.scene -> scene: str,
@@ -1191,8 +1329,8 @@ class ThermalBand(Band):
             self.k2 -> k2: float,
             self.lambda_thermal -> lambda_thermal: float,
             meta -> meta: dict = None,
-        '''
-        globals()[name] = ThermalBand(
+        """
+        self._bands[name] = ThermalBand(
             name,
             self.scene,
             self.spacecraft_id,
@@ -1274,6 +1412,234 @@ class ThermalBand(Band):
         if ret:
             return bt, bt_meta
 
+class L2ThermalBand(Band):
+    def __init__(
+        self,
+        band: str,
+        scene: str,
+        spacecraft_id: str,
+        sensor_id: str,
+        date_acquired: dt.date,
+        scene_center_time: dt.time,
+        scene_center_datetime: dt.datetime,
+        sun_azimuth: float,
+        sun_elevation: float,
+        earth_sun_distance: float,
+        filename: str,
+        folder: str,
+        path: object,
+        dtype: object,
+        maxtemp: float,
+        mintemp: float,
+        maxqcal: int,
+        minqcal: int,
+        gain_temp: float,
+        offset_temp: float,
+        lambda_thermal: float,
+        meta: dict = None,
+    ):
+        """
+        Class to handle Landsat L2 Thermal Bands
+        """
+
+
+        '''
+        super().__init__() sends to __init__() of parent Class Band:
+            band -> band: str,
+            scene -> scene: str,
+            spacecraft_id -> spacecraft_id: str,
+            sensor_id -> sensor_id: str,
+            date_acquired -> date_acquired: dt.date,
+            scene_center_time -> scene_center_time: dt.time,
+            scene_center_datetime -> scene_center_datetime: dt.datetime,
+            sun_azimuth -> sun_azimuth: float,
+            sun_elevation -> sun_elevation: float,
+            earth_sun_distance -> earth_sun_distance: float,
+            filename -> filename: str,
+            folder -> folder: str,
+            path -> path: object,
+            dtype -> dtype: object,
+            meta -> meta: dict = None,
+             -> crs: object = None,
+        '''
+        super().__init__(
+            band,
+            scene,
+            spacecraft_id,
+            sensor_id,
+            date_acquired,
+            scene_center_time,
+            scene_center_datetime,
+            sun_azimuth,
+            sun_elevation,
+            earth_sun_distance,
+            filename,
+            folder,
+            path,
+            dtype,
+            meta,
+        )
+        self._maxtemp = maxtemp
+        self._mintemp = mintemp
+        self._maxqcal = maxqcal
+        self._minqcal = minqcal
+        self._gain_temp = gain_temp
+        self._offset_temp = offset_temp
+        self._lambda_thermal = lambda_thermal
+        self._resampled = [band]
+        self._resample_index = 0
+        self._boa = None
+
+        self._bands = {}
+
+        if meta is not None:
+            self._meta = meta
+        else:
+            with rasterio.open(self.path) as src:
+                self._meta = src.meta
+
+    @property
+    def maxtemp(self):
+        return self._maxtemp
+
+    @property
+    def mintemp(self):
+        return self._mintemp
+
+    @property
+    def maxqcal(self):
+        return self._maxqcal
+
+    @property
+    def minqcal(self):
+        return self._minqcal
+
+    @property
+    def gain_temp(self):
+        return self._gain_temp
+
+    @property
+    def offset_temp(self):
+        return self._offset_temp
+
+    @property
+    def lambda_thermal(self):
+        return self._lambda_thermal
+
+    @property
+    def resampled(self):
+        return self._resampled
+
+    @resampled.setter
+    def resampled(self, value: str):
+        self._resampled.append(value)
+
+    @property
+    def resample_index(self):
+        return self._resample_index
+
+    @resample_index.setter
+    def resample_index(self, value: bool):
+        if value:
+            self._resample_index += 1
+
+    @property
+    def boa(self):
+        return self._boa
+
+    @boa.setter
+    def boa(self, value: str):
+        self._boa = value
+
+    def create_L2_thermal_band(self, name: str, meta: dict):
+        """
+        Creates a new object of Class ThermalBand by sending:
+            name -> band: str,
+            self.scene -> scene: str,
+            self.spacecraft_id -> spacecraft_id: str,
+            self.sensor_id -> sensor_id: str,
+            self.date_acquired -> date_acquired: dt.date,
+            self.scene_center_time -> scene_center_time: dt.time,
+            self.scene_center_datetime -> scene_center_datetime: dt.datetime,
+            self.sun_azimuth -> sun_azimuth: float,
+            self.sun_elevation -> sun_elevation: float,
+            self.earth_sun_distance -> earth_sun_distance: float,
+            f'{self.scene}_{name}.TIF' -> filename: str,
+            self.folder -> folder: str,
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF") -> path: object,
+            meta["dtype"] -> dtype: object,
+            self.maxtemp -> maxtemp: float,
+            self.mintemp -> mintemp: float,
+            self.maxqcal -> maxqcal: int,
+            self.minqcal -> minqcal: int,
+            self.gain_temp -> gain_temp: float,
+            self.offset_temp -> offset_temp: float,
+            self.lambda_thermal -> lambda_thermal: float,
+            meta -> meta: dict = None,
+        """
+        self._bands[name] = L2ThermalBand(
+            name,
+            self.scene,
+            self.spacecraft_id,
+            self.sensor_id,
+            self.date_acquired,
+            self.scene_center_time,
+            self.scene_center_datetime,
+            self.sun_azimuth,
+            self.sun_elevation,
+            self.earth_sun_distance,
+            f"{self.scene}_{name}.TIF",
+            self.folder,
+            os.path.join(self.folder, f"{self.scene}_{name}.TIF"),
+            meta["dtype"],
+            self.maxtemp,
+            self.mintemp,
+            self.maxqcal,
+            self.minqcal,
+            self.gain_temp,
+            self.offset_temp,
+            self.lambda_thermal,
+            meta,
+        )
+
+    def resample(
+        self,
+        height: int,
+        width: int,
+        mode=Resampling.nearest,
+        name: str = None,
+        save: bool = True,
+        ret: bool = False,
+    ):
+        out_data, out_meta = self.return_resampled(height, width, mode)
+
+        if save:
+            if not name:
+                name = f"{self.band}_resampled_{self.resample_index}"
+            self.save(name, out_meta, out_data)
+            self.create_L2_thermal_band(name, out_meta)
+            self.resampled = name
+            self.resample_index = True
+
+        if ret:
+            return out_data, out_meta
+
+    def calculate_bt(self, name: str = None, save: bool = True, ret: bool = False):
+        band_float = self.to_float()
+        band_rescaled = (band_float * self.gain_temp) + self.offset_temp
+        rescaled_meta = self.meta.copy()
+        rescaled_meta.update(dtype=np.float64, nodata=np.nan)
+        if save:
+            if not name:
+                name = f"{self.band}_BT"
+            self.save(name, rescaled_meta, band_rescaled)
+            self.create_L2_thermal_band(name, rescaled_meta)
+            self.boa = name
+
+        if ret:
+            return band_rescaled, rescaled_meta
+
+
 
 class ProcessedBand(Band):
     def __init__(
@@ -1336,13 +1702,14 @@ class ProcessedBand(Band):
             meta,
         )
         self._info = info
+        self._bands = {}
 
     @property
     def info(self):
         return self._info
 
     def create_processed_band(self, name: str, meta: dict, info: str):
-        globals()[name] = ProcessedBand(
+        self._bands[name] = ProcessedBand(
             name,
             self.scene,
             self.spacecraft_id,
