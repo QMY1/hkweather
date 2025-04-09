@@ -1,28 +1,29 @@
-[tool.poetry]
+[project]
 name = "hkweather"
 version = "0.1.0"
 description = "Code for project analysing weather and remote sensing data for Hindu Kush"
-authors = ["bamacgabhann <breandan.macgabhann@ul.ie>"]
+authors = [{ name = "bamacgabhann", email = "breandan.macgabhann@ul.ie" }]
+requires-python = "~=3.11"
 readme = "README.md"
+dependencies = [
+    "pandas>=2.2.3,<3",
+    "numpy>=2.2.3,<3",
+    "matplotlib>=3.10.0,<4",
+    "seaborn>=0.13.2,<0.14",
+    "statsmodels>=0.14.4,<0.15",
+    "rasterio>=1.4.3,<2",
+    "pyarrow>=19.0.1,<20",
+    "geopandas>=1.0.1,<2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-pandas = "^2.2.3"
-numpy = "^2.2.3"
-matplotlib = "^3.10.0"
-seaborn = "^0.13.2"
-statsmodels = "^0.14.4"
-rasterio = "^1.4.3"
-pyarrow = "^19.0.1"
-geopandas = "^1.0.1"
-
-
-[tool.poetry.group.dev.dependencies]
-ipywidgets = "^8.1.5"
-black = "^25.1.0"
-flake8 = "^7.1.2"
-ipykernel = "^6.29.5"
+[dependency-groups]
+dev = [
+    "ipywidgets>=8.1.5,<9",
+    "black>=25.1.0,<26",
+    "flake8>=7.1.2,<8",
+    "ipykernel>=6.29.5,<7",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

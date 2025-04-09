@@ -146,7 +146,7 @@ class Scene:
 
             match self._spacecraft_id:
                 case "LANDSAT_5":
-                    self._lambda_thermal = 0.0001145
+                    self._lambda_thermal = 0.00001145
                     self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
                     self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
                     self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
@@ -160,7 +160,7 @@ class Scene:
                                 self.B6 = L2ThermalBand(*self.get_thermal_band_info(mtl, "6"))
                     self.thermal = self.B6
                 case "LANDSAT_7":
-                    self._lambda_thermal = 0.0001145
+                    self._lambda_thermal = 0.00001145
                     self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
                     self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
                     self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
@@ -180,7 +180,7 @@ class Scene:
 
                     self.thermal = self.B6
                 case "LANDSAT_8":
-                    self._lambda_thermal = 0.0001090
+                    self._lambda_thermal = 0.00001090
                     self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
                     self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
                     self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
@@ -197,7 +197,7 @@ class Scene:
                                 self.B10 = L2ThermalBand(*self.get_thermal_band_info(mtl, "10"))
                     self.thermal = self.B10
                 case "LANDSAT_9":
-                    self._lambda_thermal = 0.0001090
+                    self._lambda_thermal = 0.00001090
                     self.B1 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "1"))
                     self.B2 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "2"))
                     self.B3 = ReflectanceBand(*self.get_reflectance_band_info(mtl, "3"))
@@ -622,7 +622,7 @@ class Scene:
         if ndvi_max is None:
             ndvi_max = self.ndvi_max
         ndvi_clip = np.clip(ndvi, ndvi_min, ndvi_max)
-        pv = (ndvi_clip - ndvi_min) / (ndvi_max - ndvi_min)
+        pv = ((ndvi_clip - ndvi_min) / (ndvi_max - ndvi_min))**2
         pv_clip = np.clip(pv, 0, 1)
         if save:
             self.save("PV", pv_meta, pv_clip)
